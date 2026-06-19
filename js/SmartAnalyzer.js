@@ -291,7 +291,7 @@ function smoothArr(arr, w) {
 }
 
 /**
- * Force des plages d'au moins `minLen` mesures : tout segment plus court est
+ * Force des plages d'au moins minLen mesures : tout segment plus court est
  * absorbé par le voisin au plus long run. Répété jusqu'à stabilité.
  * @param {number[]} arr - classes par mesure (modifié en place)
  * @param {number} minLen

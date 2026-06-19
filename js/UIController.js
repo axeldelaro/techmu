@@ -85,8 +85,11 @@ export class UIController {
 
   _buildBassKnobs() {
     const c = $('#knobs-bass');
-    this._addKnob(c, { label: 'Level', path: 'bass.level', min: 0, max: 1, value: 0.5 });
-    this._addKnob(c, { label: 'Decay', path: 'bass.decay', min: 0.04, max: 0.6, value: 0.16, unit: 's' });
+    this._addKnob(c, { label: 'Level', path: 'bass.level', min: 0, max: 1, value: 0.55 });
+    this._addKnob(c, { label: 'Growl', path: 'bass.growl', min: 0, max: 1, value: 0.35 });
+    this._addKnob(c, { label: 'Tone', path: 'bass.tone', min: 80, max: 4000, value: 240, exp: true, unit: 'Hz' });
+    this._addKnob(c, { label: 'Punch', path: 'bass.punch', min: 0, max: 1, value: 0.4 });
+    this._addKnob(c, { label: 'Decay', path: 'bass.decay', min: 0.04, max: 0.6, value: 0.18, unit: 's' });
     this._addKnob(c, { label: 'Octave', path: 'bass.octave', min: -2, max: 1, value: 0 });
     this._addKnob(c, { label: 'Glide', path: 'bass.glide', min: 0, max: 0.2, value: 0, unit: 's' });
     this._addKnob(c, { label: 'Drive', path: 'bass.drive', min: 0, max: 1, value: 0.3 });

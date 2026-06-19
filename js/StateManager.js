@@ -40,11 +40,15 @@ function defaultState() {
     // Layer de BASSE dédié (sub) — joué par l'arrangement, accordé par section.
     bass: {
       on: true,
-      level: 0.5,
-      decay: 0.16,       // s
+      level: 0.55,
+      decay: 0.18,       // s
       octave: 0,         // décalage d'octave global
       glide: 0.0,        // s portamento entre notes
       drive: 0.3,        // saturation douce
+      growl: 0.35,       // 0..1 mix du layer "growl" (médiums distordus, audible sur petits HP)
+      tone: 240,         // Hz coupure du tone (ouvre/ferme la basse)
+      punch: 0.4,        // 0..1 chute de pitch à l'attaque (thump)
+      sidechain: true,   // duck la basse sous le kick (bas du spectre net)
       mode: 'offbeat'    // offbeat | sustain | root
     },
 

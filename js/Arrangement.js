@@ -124,18 +124,23 @@ export class Arrangement {
     let _r = (seed ^ (stepGlobal * 2654435761)) >>> 0;
     const Rnd = () => ((_r = (_r * 1664525 + 1013904223) >>> 0) / 4294967296);
 
-    // ---- LAYER DE BASSE (sub) — accordé à la section, réglable/éditable ----
+    // ---- LAYER DE BASSE (sub) — accordé à la section, riff léger, sidechain ----
     if (eng.subBass) {
       const defOn = (type === 'chorus' || type === 'build' || type === 'trans');
       const bassOn = (this.s.bassOn && this.s.bassOn[bar] != null) ? !!this.s.bassOn[bar] : defOn;
+      const mode = (this.state ? this.state.get('bass').mode : 'offbeat');
       if (bassOn && fade > 0.04) {
         const boct = (this.s.bassOct && this.s.bassOct[bar] != null) ? this.s.bassOct[bar] : 0;
-        const bf = f * Math.pow(2, boct);
-        const mode = (this.state ? this.state.get('bass').mode : 'offbeat');
-        if (mode === 'sustain') { if (q === 0 && six === 0) eng.subBass.trigger(time, bf, this.barLen * 0.95, V(0.8)); }
-        else if (mode === 'root') { if (six === 0) eng.subBass.trigger(time, bf, this.beat * 0.6, V(0.9)); }
-        else { if (six === 2) eng.subBass.trigger(time, bf, this.beat * 0.45, V(0.9)); } // offbeat
+        // Riff de basse : surtout la fondamentale, avec quinte/octave ponctuelles
+        // (mouvement musical sans surcharger). Suit la position dans la phrase.
+        const riff = [0, 0, 0, 7, 0, 0, 12, 7];
+        const noteFreq = (idx) => f * Math.pow(2, boct + (riff[idx % riff.length] / 12));
+        if (mode === 'sustain') { if (q === 0 && six === 0) eng.subBass.trigger(time, noteFreq(pp), this.barLen * 0.95, V(0.8)); }
+        else if (mode === 'root') { if (six === 0) eng.subBass.trigger(time, noteFreq(q), this.beat * 0.6, V(0.9)); }
+        else { if (six === 2) eng.subBass.trigger(time, noteFreq(q), this.beat * 0.5, V(0.95)); } // offbeat
       }
+      // Sidechain de la basse : elle plonge sous chaque kick (modes root/sustain).
+      if (mode !== 'offbeat' && six === 0 && eng.subBass.duck) eng.subBass.duck(time);
     }
 
     switch (type) {
