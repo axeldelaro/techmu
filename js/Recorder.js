@@ -1,11 +1,6 @@
 /* =====================================================================
    Recorder.js — Export audio (Bouncing) en temps réel.
-
-   Deux moteurs :
-    - WebM/Opus via MediaRecorder branché sur un MediaStreamDestination
-      tapé sur le master (capture toutes les manipulations live).
-    - WAV via un ScriptProcessorNode qui capture le PCM brut puis l'encode
-      en conteneur WAV 16-bit (compatibilité universelle).
+   (Version modifiée : Capture PCM brute WAV exclusivement)
    ===================================================================== */
 
 export class Recorder {
@@ -13,44 +8,31 @@ export class Recorder {
   constructor(engine) {
     this.engine = engine;
     this.recording = false;
-    this._chunks = [];
     this._pcmL = [];
     this._pcmR = [];
   }
 
   /**
    * Démarre l'enregistrement.
-   * @param {'webm'|'wav'} format
    */
-  start(format = 'webm') {
+  start() {
     if (this.recording) return;
     this.recording = true;
-    this.format = format;
     const ctx = this.engine.ctx;
 
-    if (format === 'webm' && window.MediaRecorder) {
-      // Tap -> MediaStreamDestination -> MediaRecorder.
-      this._streamDest = ctx.createMediaStreamDestination();
-      this.engine.recordTap.connect(this._streamDest);
-      this._chunks = [];
-      this._mr = new MediaRecorder(this._streamDest.stream, { mimeType: 'audio/webm' });
-      this._mr.ondataavailable = (e) => { if (e.data.size) this._chunks.push(e.data); };
-      this._mr.start();
-    } else {
-      // Fallback / WAV : capture PCM via ScriptProcessor (déprécié mais universel).
-      this._pcmL = []; this._pcmR = [];
-      this._proc = ctx.createScriptProcessor(4096, 2, 2);
-      this._proc.onaudioprocess = (e) => {
-        if (!this.recording) return;
-        this._pcmL.push(new Float32Array(e.inputBuffer.getChannelData(0)));
-        this._pcmR.push(new Float32Array(e.inputBuffer.getChannelData(1)));
-      };
-      this.engine.recordTap.connect(this._proc);
-      // Le ScriptProcessor doit être connecté à une destination pour tourner.
-      this._silent = ctx.createGain();
-      this._silent.gain.value = 0;
-      this._proc.connect(this._silent).connect(ctx.destination);
-    }
+    this._pcmL = []; this._pcmR = [];
+    this._proc = ctx.createScriptProcessor(4096, 2, 2);
+    this._proc.onaudioprocess = (e) => {
+      if (!this.recording) return;
+      this._pcmL.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+      this._pcmR.push(new Float32Array(e.inputBuffer.getChannelData(1)));
+    };
+    this.engine.recordTap.connect(this._proc);
+    
+    // Le ScriptProcessor doit être connecté à une destination pour tourner.
+    this._silent = ctx.createGain();
+    this._silent.gain.value = 0;
+    this._proc.connect(this._silent).connect(ctx.destination);
   }
 
   /**
@@ -61,16 +43,7 @@ export class Recorder {
     if (!this.recording) return;
     this.recording = false;
 
-    if (this._mr) {
-      await new Promise((res) => {
-        this._mr.onstop = res;
-        this._mr.stop();
-      });
-      this.engine.recordTap.disconnect(this._streamDest);
-      const blob = new Blob(this._chunks, { type: 'audio/webm' });
-      this._download(blob, 'uptempo-export.webm');
-      this._mr = null;
-    } else if (this._proc) {
+    if (this._proc) {
       this.engine.recordTap.disconnect(this._proc);
       this._proc.disconnect();
       this._silent.disconnect();
