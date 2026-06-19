@@ -359,84 +359,81 @@ export class SmartAnalyzer {
    */
   applyAutoRemix(a, opts = {}) {
     const state = this.state;
-    const targetBpm = opts.targetBpm || state.get('transport.bpm') || 200;
 
-    // Mémorise l'analyse dans l'état (pour l'UI / debug / save).
-    state.set('transport.bpm', targetBpm);
+    /* ---- 1) TEMPO UPTEMPO ----
+       On vise une grille uptempo/HardTechno (~170-210 BPM). On dérive ce
+       tempo comme un multiple du BPM détecté pour que les kicks restent
+       calés sur la pulsation du morceau (kick toutes les 1/2 mesures).
+       IMPORTANT : on NE pitch PAS le morceau (playbackRate=1) -> il reste
+       reconnaissable ; seul le kick tourne en uptempo par-dessus. */
+    let target = opts.targetBpm || a.bpm || 180;
+    while (target < 170) target *= 2;
+    while (target > 215) target /= 2;
+    if (target < 150) target = (a.bpm || 90) * 2;
+    state.set('transport.bpm', Math.round(target));
+    state.set('sample.playbackRate', 1.0); // pas de chipmunk : musique au pitch d'origine
 
-    /* ---- 1) SMART TIME-STRETCHING ----
-       Ratio = BPM cible / BPM détecté. On l'applique au playbackRate du
-       lecteur master pour caler la musique sur la grille. (Borné pour
-       éviter les artefacts extrêmes.) */
-    if (a.bpm > 0) {
-      let ratio = targetBpm / a.bpm;
-      // Replie le ratio dans [0.5, 2] par octaves si la détection a dérivé.
-      while (ratio > 1.6) ratio /= 2;
-      while (ratio < 0.6) ratio *= 2;
-      state.set('sample.playbackRate', +ratio.toFixed(4));
-    }
-
-    /* ---- 2) AUTO-TUNING harmonique ----
-       Fondamentale -> note MIDI. Le Sub-Kick et l'Acid 303 s'y accordent. */
-    const fund = a.fundamental > 0 ? a.fundamental : 55; // fallback A1
+    /* ---- 2) AUTO-TUNING du SUB-KICK ----
+       Fondamentale détectée -> repliée dans la plage sub (38..90 Hz). */
+    const fund = a.fundamental > 0 ? a.fundamental : 73;
     const midi = Math.round(69 + 12 * Math.log2(fund / 440));
-
-    // Sub-Kick : on replie la fondamentale dans la plage sub (30..120 Hz).
     let subHz = midiToFreq(midi);
-    while (subHz > 120) subHz /= 2;
-    while (subHz < 30) subHz *= 2;
+    while (subHz > 90) subHz /= 2;
+    while (subHz < 38) subHz *= 2;
     state.set('kick.tune', +subHz.toFixed(1));
 
-    // Acid 303 : root = fondamentale ramenée dans le registre basse (octave 1-2).
-    let acidMidi = midi;
-    while (acidMidi > 48) acidMidi -= 12;
-    while (acidMidi < 24) acidMidi += 12;
-    state.set('acid.rootMidi', acidMidi);
-
-    /* ---- 3) AUTO-SÉQUENÇAGE ----
-       Kick 4/4 (tous les temps) + ligne Acid aléatoire contrainte à la
-       gamme de la fondamentale. */
+    /* ---- 3) AUTO-SÉQUENÇAGE — GROS KICKS uniquement (zéro acid) ----
+       4-on-floor (pas 0,4,8,12) + fill 16e occasionnel pour casser le côté
+       trop automatique. Piste gater laissée propre. */
     const seq = JSON.parse(JSON.stringify(state.get('sequencer')));
     seq.kick = new Array(16).fill(false);
-    for (let i = 0; i < 16; i += 4) seq.kick[i] = true; // pas 0,4,8,12
-
+    for (let i = 0; i < 16; i += 4) seq.kick[i] = true;     // 4/4
+    if (Math.random() < 0.6) seq.kick[14] = true;            // fill avant la boucle
+    if (Math.random() < 0.3) seq.kick[7] = true;             // ghost offbeat
+    seq.gater = new Array(16).fill(false);
+    // arrays acid neutralisés (instrument retiré)
     seq.acid = new Array(16).fill(false);
-    seq.acidNotes = new Array(16).fill(0);
-    seq.acidAccents = new Array(16).fill(false);
-    // Gamme mineure pentatonique (sûre pour un dancefloor sombre).
-    const scale = [0, 3, 5, 7, 10, 12];
-    for (let i = 0; i < 16; i++) {
-      // Densité ~55%, en évitant le temps fort où le kick claque seul.
-      if (i % 4 === 0) continue;
-      if (Math.random() < 0.55) {
-        seq.acid[i] = true;
-        seq.acidNotes[i] = scale[(Math.random() * scale.length) | 0]
-          + (Math.random() < 0.2 ? 12 : 0); // saut d'octave occasionnel
-        seq.acidAccents[i] = Math.random() < 0.3;
-      }
-    }
     state.set('sequencer', seq);
 
-    /* ---- 4) AUTO-DRIVE ---- distorsion agressive de base (Uptempo). */
+    /* ---- 4) AUTO-DRIVE + RUMBLE ----
+       Distorsion agressive + decay long = kick qui "rumble" (Uptempo/Raw). */
     state.set('kick.curve', 'hardclip');
-    state.set('kick.drive', 0.8);
+    state.set('kick.drive', 0.85);
+    state.set('kick.decay', 0.55);
     state.set('kick.eqGain', 8);
+    state.set('kick.noise', 0.15);
 
-    /* ---- 5) SIDECHAIN DUCKING AUTOMATIQUE ----
-       Compresseur agressif sur la piste d'origine, pompé par le kick. */
+    /* ---- 5) SIDECHAIN agressif (pompe le morceau sous le kick). */
     this.engine.configureAutoSidechain();
 
-    /* ---- 6) ALIGNEMENT DE PHASE + lecture synchronisée ----
-       On démarre le séquenceur et le sample de sorte que le pas 0 du kick
-       tombe exactement sur le downbeat détecté de la musique. */
+    /* ---- 6) ALIGNEMENT DE PHASE + lecture synchronisée. */
     if (opts.autoplay !== false) {
       const ctx = this.engine.ctx;
       const startAt = ctx.currentTime + 0.12;
       const downbeatSec = (a.offsetMs || 0) / 1000;
       this.scheduler?.stop();
-      // Le sample démarre à son downbeat -> aligné sur le pas 0.
       this.engine.playSampleAt(startAt, downbeatSec);
       this.scheduler?.start(startAt);
     }
+  }
+
+  /**
+   * Pattern HardTechno par défaut, sans sample : garantit que le bouton
+   * Auto-Remix produit toujours du son (gros kicks 4/4 uptempo).
+   */
+  applyDefaultPattern() {
+    const state = this.state;
+    state.set('transport.bpm', 190);
+    const seq = JSON.parse(JSON.stringify(state.get('sequencer')));
+    seq.kick = new Array(16).fill(false);
+    for (let i = 0; i < 16; i += 4) seq.kick[i] = true;
+    seq.kick[14] = true;
+    seq.gater = new Array(16).fill(false);
+    seq.acid = new Array(16).fill(false);
+    state.set('sequencer', seq);
+    state.set('kick.curve', 'hardclip');
+    state.set('kick.drive', 0.85);
+    state.set('kick.decay', 0.55);
+    state.set('kick.tune', 55);
   }
 }

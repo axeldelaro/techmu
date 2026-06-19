@@ -103,14 +103,6 @@ export class Scheduler {
       // Le kick déclenche le ducking sidechain (signal fantôme).
       this.engine.duck(swungTime);
     }
-    // --- Acid ---
-    if (seq.acid[step]) {
-      const note = seq.acidNotes[step] || 0;
-      const accent = !!seq.acidAccents[step];
-      // Slide si le pas suivant est aussi actif (legato 303).
-      const slide = !!seq.acid[(step + 1) % 16];
-      this.engine.acid.trigger(swungTime, note, accent, slide);
-    }
     // --- Gater (coupure master) ---
     if (seq.gater[step]) {
       this.engine.gate(swungTime, this._secondsPer16th());

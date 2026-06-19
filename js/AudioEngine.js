@@ -11,7 +11,6 @@
    ===================================================================== */
 
 import { HardcoreKick } from './instruments/HardcoreKick.js';
-import { Acid303 } from './instruments/Acid303.js';
 import { clamp, mapRange } from './utils.js';
 
 export class AudioEngine {
@@ -98,9 +97,8 @@ export class AudioEngine {
     this.sampleDuck.connect(this.scComp);
     this.scComp.connect(this.sampleGain).connect(this.busInput);
 
-    // ---------- Instruments ----------
+    // ---------- Instruments (HardTechno/Uptempo : gros kicks uniquement) ----------
     this.kick = new HardcoreKick(ctx, this.busInput, this.state);
-    this.acid = new Acid303(ctx, this.busInput, this.state);
 
     this._applyState();
     this.state.on('fx', () => this._applyState());

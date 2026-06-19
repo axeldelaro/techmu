@@ -22,10 +22,8 @@ export class UIController {
   build() {
     this._buildMasterKnobs();
     this._buildKickKnobs();
-    this._buildAcidKnobs();
     this._buildFxKnobs();
     this._buildSequencer();
-    this._buildAcidRootSelect();
     this._bindTransport();
     this._bindImport();
     this._bindSelectsAndChecks();
@@ -76,18 +74,6 @@ export class UIController {
     this._addKnob(c, { label: 'Level', path: 'kick.level', min: 0, max: 1, value: 0.9 });
   }
 
-  _buildAcidKnobs() {
-    const c = $('#knobs-acid');
-    const v = 'acid';
-    this._addKnob(c, { variant: v, label: 'Cutoff', path: 'acid.cutoff', min: 80, max: 6000, value: 600, exp: true, unit: 'Hz' });
-    this._addKnob(c, { variant: v, label: 'Reso', path: 'acid.resonance', min: 1, max: 30, value: 18 });
-    this._addKnob(c, { variant: v, label: 'Env Mod', path: 'acid.envMod', min: 0, max: 6000, value: 2500, exp: true, unit: 'Hz' });
-    this._addKnob(c, { variant: v, label: 'Env Dec', path: 'acid.envDecay', min: 0.03, max: 0.8, value: 0.25, unit: 's' });
-    this._addKnob(c, { variant: v, label: 'Accent', path: 'acid.accentAmt', min: 0, max: 1, value: 0.6 });
-    this._addKnob(c, { variant: v, label: 'Glide', path: 'acid.glide', min: 0, max: 0.3, value: 0.06, unit: 's' });
-    this._addKnob(c, { variant: v, label: 'Level', path: 'acid.level', min: 0, max: 1, value: 0.7 });
-  }
-
   _buildFxKnobs() {
     const c = $('#knobs-fx');
     const v = 'fx';
@@ -105,7 +91,6 @@ export class UIController {
     host.innerHTML = '';
     const tracks = [
       { id: 'kick', name: 'KICK', cls: '' },
-      { id: 'acid', name: 'ACID', cls: 'acid' },
       { id: 'gater', name: 'GATER', cls: 'gater' }
     ];
     for (const tr of tracks) {
@@ -129,50 +114,26 @@ export class UIController {
   /**
    * Interactions cellule :
    *  - clic gauche : active/désactive le pas.
-   *  - shift+clic (acid) : bascule l'accent.
-   *  - molette (acid) : transpose la note du pas (±12 demi-tons).
    */
   _bindCell(cell, track, index) {
-    cell.addEventListener('click', (e) => {
-      if (track === 'acid' && e.shiftKey) {
-        const seq = this.state.get('sequencer');
-        seq.acidAccents[index] = !seq.acidAccents[index];
-        this.state.set('sequencer.acidAccents', seq.acidAccents);
-      } else {
-        this.state.toggleStep(track, index);
-      }
+    cell.addEventListener('click', () => {
+      this.state.toggleStep(track, index);
       this._syncSequencer();
     });
-
-    if (track === 'acid') {
-      cell.addEventListener('wheel', (e) => {
-        e.preventDefault();
-        const seq = this.state.get('sequencer');
-        const cur = seq.acidNotes[index] || 0;
-        seq.acidNotes[index] = Math.max(-12, Math.min(24, cur + (e.deltaY < 0 ? 1 : -1)));
-        this.state.set('sequencer.acidNotes', seq.acidNotes);
-        this._syncSequencer();
-      }, { passive: false });
-    }
   }
 
   /** Reflète l'état du séquenceur dans le DOM. */
   _syncSequencer() {
     const seq = this.state.get('sequencer');
-    for (const track of ['kick', 'acid', 'gater']) {
+    for (const track of ['kick', 'gater']) {
       this.seqCells[track].forEach((cell, i) => {
         cell.classList.toggle('on', !!seq[track][i]);
-        if (track === 'acid') {
-          cell.classList.toggle('accent', !!seq.acidAccents[i]);
-          const n = seq.acidNotes[i] || 0;
-          cell.title = `${NOTE_NAMES[((n % 12) + 12) % 12]} (${n >= 0 ? '+' : ''}${n})`;
-        }
       });
     }
   }
 
   _highlightStep(step) {
-    for (const track of ['kick', 'acid', 'gater']) {
+    for (const track of ['kick', 'gater']) {
       this.seqCells[track].forEach((cell, i) => cell.classList.toggle('playhead', i === step));
     }
     const led = $('#beat-led');
@@ -181,22 +142,8 @@ export class UIController {
 
   /* ---------------- Selects / Checks ---------------- */
 
-  _buildAcidRootSelect() {
-    const sel = $('#acid-root');
-    // Notes de C1 (MIDI 24) à C3 (MIDI 48), registre basse.
-    for (let m = 24; m <= 48; m++) {
-      const name = NOTE_NAMES[m % 12] + (Math.floor(m / 12) - 1);
-      const opt = el('option', null, name);
-      opt.value = String(m);
-      sel.appendChild(opt);
-    }
-    sel.value = String(this.state.get('acid.rootMidi'));
-    sel.addEventListener('change', () => this.state.set('acid.rootMidi', parseInt(sel.value, 10)));
-  }
-
   _bindSelectsAndChecks() {
     $('#kick-curve').addEventListener('change', (e) => this.state.set('kick.curve', e.target.value));
-    $('#acid-wave').addEventListener('change', (e) => this.state.set('acid.wave', e.target.value));
     $('#sidechain-on').addEventListener('change', (e) => this.state.set('fx.sidechainOn', e.target.checked));
     $('#djfilter-on').addEventListener('change', (e) => this.state.set('fx.djFilterOn', e.target.checked));
     $('#track-loop').addEventListener('change', (e) => this.state.set('sample.loop', e.target.checked));
@@ -338,10 +285,19 @@ export class UIController {
   _bindAutoRemix() {
     const btn = $('#btn-autoremix');
     btn.addEventListener('click', async () => {
+      // Politique autoplay : on s'assure que le contexte est bien actif.
+      try { await this.engine.ctx.resume(); } catch (_) {}
+
+      // Sans sample : on génère et on lance quand même un pattern HardTechno
+      // (le bouton "produit" toujours quelque chose d'audible).
       if (!this.engine.sampleBuffer) {
-        $('#status-text').textContent = 'Importez d\'abord un sample à remixer.';
+        this.smartAnalyzer.applyDefaultPattern();
+        this.play();
+        $('#analysis-readout').textContent = 'IA: aucun sample — pattern HardTechno 4/4 généré. Importez un morceau pour le remixer.';
+        $('#status-text').textContent = 'Pattern lancé. ▶ Importez un sample puis re-cliquez pour un vrai Auto-Remix.';
         return;
       }
+
       btn.classList.add('busy');
       btn.textContent = '⏳ ANALYSE…';
       $('#analysis-readout').textContent = 'IA: analyse DSP en cours (Web Worker)…';
@@ -350,8 +306,8 @@ export class UIController {
         const a = await this.smartAnalyzer.analyzeAndRemix({ autoplay: true });
         const noteName = this._hzToNote(a.fundamental);
         $('#analysis-readout').textContent =
-          `IA ▸ BPM ${a.bpm} · downbeat ${Math.round(a.offsetMs)}ms · ` +
-          `fond. ${a.fundamental.toFixed(1)}Hz (${noteName}) · ratio ×${this.state.get('sample.playbackRate')}`;
+          `IA ▸ BPM ${a.bpm} · kick ${this.state.get('transport.bpm')} · downbeat ${Math.round(a.offsetMs)}ms · ` +
+          `fond. ${a.fundamental.toFixed(1)}Hz (${noteName})`;
         $('#status-text').textContent = 'Auto-Remix appliqué et calé. ▶ Lecture synchronisée.';
         // L'analyseur a déjà démarré la lecture synchronisée : reflète le transport.
         $('#btn-play').classList.add('active');
@@ -391,8 +347,6 @@ export class UIController {
     $('#swing-input').value = this.state.get('transport.swing');
     $('#swing-val').textContent = Math.round(this.state.get('transport.swing') * 200) + '%';
     $('#kick-curve').value = this.state.get('kick.curve');
-    $('#acid-wave').value = this.state.get('acid.wave');
-    $('#acid-root').value = String(this.state.get('acid.rootMidi'));
     $('#sidechain-on').checked = this.state.get('fx.sidechainOn');
     $('#djfilter-on').checked = this.state.get('fx.djFilterOn');
     $('#track-loop').checked = this.state.get('sample.loop');

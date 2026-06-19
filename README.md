@@ -27,7 +27,6 @@ Puis ouvrez <http://localhost:8000>, cliquez **« Initialiser le moteur audio »
 | `AudioEngine` | Graphe master, limiter de mastering, sample player, sidechain, DJ filter, stutter, décodage worker |
 | `Scheduler` | Séquenceur **sample-accurate** (lookahead + Web Worker horloge), swing |
 | `HardcoreKick` | Synthèse de kick multi-layer + distorsion WaveShaper multi-courbes + EQ |
-| `Acid303` | Émulateur TB-303 (filtre résonant + enveloppe de filtre, accent, glide) |
 | `FX` (dans Engine) | DJ filter morphable LP/HP, sidechain ducking, beatmasher |
 | `Visualizer` | Oscilloscope + spectrogramme + VU-mètres RMS/Peak (`AnalyserNode`) |
 | `MidiController` | Web MIDI — mapping CC → knobs (MIDI Learn par clic droit) |
@@ -37,8 +36,10 @@ Puis ouvrez <http://localhost:8000>, cliquez **« Initialiser le moteur audio »
 ## Prise en main rapide
 
 - **Transport** : `Espace` = Play/Stop. Réglez le BPM et le Swing.
-- **Séquenceur** : clic sur les pas. Sur la piste **ACID** : `Shift+clic` =
-  accent, **molette** = transposer la note du pas.
+- **1-Click Auto-Remix** : importez un morceau puis cliquez — l'IA détecte
+  BPM / downbeat / tonalité et pose un kick HardTechno/Uptempo calé et pompé
+  par-dessus. Sans sample, le bouton lance quand même un pattern 4/4.
+- **Séquenceur** : clic sur les pas (pistes **KICK** et **GATER**).
 - **Knobs** : glisser verticalement (souris/tactile), `Shift` = réglage fin,
   molette pour ajuster. **Clic droit** sur un knob = *MIDI Learn*.
 - **Build-up** : maintenir le bouton pour le stutter/beatmasher.
