@@ -1,8 +1,6 @@
 /* =====================================================================
    UIController.js — Couche Vue/Contrôleur.
-   Construit les knobs, la grille du séquenceur, câble les boutons du
-   transport et les contrôles, synchronise l'UI <-> StateManager, et
-   relaie le playhead du Scheduler.
+   (Version modifiée : WAV forcé dans toute l'interface)
    ===================================================================== */
 
 import { $, $$, el, NOTE_NAMES } from './utils.js';
@@ -10,16 +8,12 @@ import { Knob } from './Knob.js';
 import { cloneStructure, compile } from './SectionModel.js';
 
 export class UIController {
-  /**
-   * @param {object} deps - { state, engine, scheduler, visualizer, midi, recorder }
-   */
   constructor(deps) {
     Object.assign(this, deps);
-    this.knobs = [];      // pour la synchro globale (load/MIDI)
-    this.seqCells = {};   // track -> [cellEls]
+    this.knobs = [];
+    this.seqCells = {};
   }
 
-  /** Point d'entrée : construit toute l'UI une fois l'audio prêt. */
   build() {
     this._buildMasterKnobs();
     this._buildKickKnobs();
@@ -39,18 +33,14 @@ export class UIController {
     this._bindBpmSearch();
     this._bindKeyboard();
 
-    // Playhead du séquenceur + surbrillance de la section en lecture.
     this.scheduler.onStep = (step) => {
       this._highlightStep(step);
       if (this.scheduler.arrangement && this.sectionEditor)
         this.sectionEditor.highlightBar(Math.floor(this.scheduler.stepGlobal / 16));
     };
 
-    // Re-synchro complète de l'UI après un load d'état.
     this.state.on('*', () => this.syncAll());
   }
-
-  /* ---------------- Knobs ---------------- */
 
   _addKnob(container, cfg) {
     const knob = new Knob({
@@ -108,8 +98,6 @@ export class UIController {
     this._addKnob(c, { variant: v, label: 'Master', path: 'fx.masterLevel', min: 0, max: 1, value: 0.85 });
   }
 
-  /* ---------------- Sequencer ---------------- */
-
   _buildSequencer() {
     const host = $('#sequencer');
     host.innerHTML = '';
@@ -135,10 +123,6 @@ export class UIController {
     this._syncSequencer();
   }
 
-  /**
-   * Interactions cellule :
-   *  - clic gauche : active/désactive le pas.
-   */
   _bindCell(cell, track, index) {
     cell.addEventListener('click', () => {
       this.state.toggleStep(track, index);
@@ -146,7 +130,6 @@ export class UIController {
     });
   }
 
-  /** Reflète l'état du séquenceur dans le DOM. */
   _syncSequencer() {
     const seq = this.state.get('sequencer');
     for (const track of ['kick', 'gater']) {
@@ -164,8 +147,6 @@ export class UIController {
     led.classList.toggle('on', step % 4 === 0);
   }
 
-  /* ---------------- Selects / Checks ---------------- */
-
   _bindSelectsAndChecks() {
     $('#kick-curve').addEventListener('change', (e) => this.state.set('kick.curve', e.target.value));
     $('#kick-tonal').addEventListener('change', (e) => this.state.set('kick.tonal', e.target.checked));
@@ -179,7 +160,6 @@ export class UIController {
     $('#kick-audition').addEventListener('click', () => this.engine.kick.trigger(this.engine.ctx.currentTime + 0.02));
   }
 
-  /** Applique un preset de caractère de kick (règle plusieurs paramètres). */
   _applyKickPreset(name) {
     const P = {
       uptempo:    { curve: 'hardclip', drive: 0.85, decay: 0.55, clickAmount: 0.6, noise: 0.12, eqFreq: 1200, eqGain: 8 },
@@ -191,8 +171,6 @@ export class UIController {
     for (const k in P) this.state.set('kick.' + k, P[k]);
     $('#status-text').textContent = `Preset kick « ${name} » appliqué.`;
   }
-
-  /* ---------------- Transport ---------------- */
 
   _bindTransport() {
     const playBtn = $('#btn-play');
@@ -220,8 +198,6 @@ export class UIController {
   }
 
   play() {
-    // En mode Auto-Remix, Play relance le remix calé sur le downbeat
-    // (séquenceur + sample synchronisés). Sinon, lecture du pattern manuel.
     if (this.scheduler.arrangement) {
       const ctx = this.engine.ctx;
       const startAt = ctx.currentTime + 0.12;
@@ -240,15 +216,11 @@ export class UIController {
   stop() {
     this.scheduler.stop();
     this.engine.stopSample();
-    // NB : on garde l'arrangement (le "projet" remix) pour pouvoir
-    // l'exporter et le relancer ; il n'est pas effacé au Stop.
     $('#btn-play').classList.remove('active');
     $('#btn-play').textContent = '▶';
     $$('.seq-cell').forEach((c) => c.classList.remove('playhead'));
     $('#status-text').textContent = 'Stop.';
   }
-
-  /* ---------------- Import ---------------- */
 
   _bindImport() {
     const dz = $('#dropzone');
@@ -286,8 +258,6 @@ export class UIController {
     }
   }
 
-  /* ---------------- Save / Load ---------------- */
-
   _bindSaveLoad() {
     $('#btn-save').addEventListener('click', () => {
       this.state.save();
@@ -303,18 +273,14 @@ export class UIController {
     });
   }
 
-  /* ---------------- Record / Export ---------------- */
-
   _bindRecord() {
     const btn = $('#btn-rec');
-    btn.addEventListener('click', async (e) => {
+    btn.addEventListener('click', async () => {
       if (!this.recorder.recording) {
-        // WAV si l'utilisateur maintient Shift, sinon WebM.
-        const fmt = e.shiftKey ? 'wav' : 'webm';
-        this.recorder.start(fmt);
+        this.recorder.start();
         btn.classList.add('active');
         btn.textContent = '● STOP';
-        $('#status-text').textContent = `Enregistrement (${fmt})… (Shift+clic = WAV)`;
+        $('#status-text').textContent = `Enregistrement direct (WAV)…`;
       } else {
         btn.textContent = '… export';
         await this.recorder.stop();
@@ -325,25 +291,22 @@ export class UIController {
     });
   }
 
-  /* ---------------- Export rapide (bounce offline) ---------------- */
-
   _bindExport() {
     const btn = $('#btn-export');
-    btn.addEventListener('click', async (e) => {
+    btn.addEventListener('click', async () => {
       if (btn.classList.contains('busy')) return;
-      const format = e.shiftKey ? 'wav' : 'mp3';   // MP3 par défaut, WAV si Shift
       if (!this.engine.sampleBuffer && !this.scheduler.arrangement) {
         $('#status-text').textContent = 'Export : aucun sample — rendu du pattern courant.';
       }
       btn.classList.add('busy');
       const label = btn.textContent;
       btn.textContent = '⤓ RENDU…';
-      $('#status-text').textContent = `Bounce hors-ligne ${format.toUpperCase()} (plus rapide que le temps réel)…`;
+      $('#status-text').textContent = `Bounce hors-ligne WAV (plus rapide que le temps réel)…`;
       try {
-        await this.offlineRenderer.render(format, (p) => {
+        await this.offlineRenderer.render((p) => {
           btn.textContent = `⤓ ${p}%`;
         });
-        $('#status-text').textContent = `Export terminé : uptempo-export.${format} téléchargé.`;
+        $('#status-text').textContent = `Export terminé : uptempo-export.wav téléchargé.`;
       } catch (e) {
         $('#status-text').textContent = 'Export : erreur — ' + e.message;
       } finally {
@@ -352,8 +315,6 @@ export class UIController {
       }
     });
   }
-
-  /* ---------------- Variantes automatiques ---------------- */
 
   _bindVariants() {
     const btn = $('#btn-variants');
@@ -366,7 +327,6 @@ export class UIController {
       }
       btn.classList.add('busy');
       const label = btn.textContent;
-      // Chaque variante change l'esprit (mode de basse, gamme) + ré-aléatoirise les fills.
       const configs = [
         { bassMode: 'offbeat', scale: 'minorPent', tag: 'rolling' },
         { bassMode: 'root', scale: 'phrygian', tag: 'dark' },
@@ -383,10 +343,9 @@ export class UIController {
           compile(clone);
           btn.textContent = `⎘ ${i + 1}/3…`;
           $('#status-text').textContent = `Variante ${i + 1}/3 (${cfg.tag})…`;
-          const blob = await this.offlineRenderer.renderToBlob(this.engine.sampleBuffer, clone, 'mp3',
+          const blob = await this.offlineRenderer.renderToBlob(this.engine.sampleBuffer, clone,
             (p) => { btn.textContent = `⎘ ${i + 1}/3 · ${p}%`; });
-          const ext = blob.type.includes('mpeg') ? 'mp3' : 'wav';
-          this.offlineRenderer._download(blob, `uptempo-variante-${i + 1}-${cfg.tag}.${ext}`);
+          this.offlineRenderer._download(blob, `uptempo-variante-${i + 1}-${cfg.tag}.wav`);
           await new Promise((r) => setTimeout(r, 500));
         }
         $('#status-text').textContent = '3 variantes téléchargées.';
@@ -401,21 +360,16 @@ export class UIController {
     });
   }
 
-  /* ---------------- Traitement en lot ---------------- */
-
   _bindBatch() {
     const input = $('#batch-input');
     $('#batch-btn').addEventListener('click', () => input.click());
     input.addEventListener('change', async () => {
       if (!input.files.length) return;
-      const format = $('#batch-wav').checked ? 'wav' : 'mp3';
       $('#status-text').textContent = `Lot : traitement de ${input.files.length} morceau(x)…`;
-      await this.batchProcessor.run(input.files, format);
+      await this.batchProcessor.run(input.files);
       input.value = '';
     });
   }
-
-  /* ---------------- Build-up (Stutter) ---------------- */
 
   _bindBuildup() {
     const btn = $('#btn-buildup');
@@ -426,16 +380,11 @@ export class UIController {
     ['mouseup', 'mouseleave', 'touchend'].forEach((ev) => btn.addEventListener(ev, end));
   }
 
-  /* ---------------- 1-Click Auto-Remix (v11) ---------------- */
-
   _bindAutoRemix() {
     const btn = $('#btn-autoremix');
     btn.addEventListener('click', async () => {
-      // Politique autoplay : on s'assure que le contexte est bien actif.
       try { await this.engine.ctx.resume(); } catch (_) {}
 
-      // Sans sample : on génère et on lance quand même un pattern HardTechno
-      // (le bouton "produit" toujours quelque chose d'audible).
       if (!this.engine.sampleBuffer) {
         this.smartAnalyzer.applyDefaultPattern();
         this.play();
@@ -459,9 +408,7 @@ export class UIController {
           `IA ▸ BPM ${a.bpm} · kick ${this.state.get('transport.bpm')} · downbeat ${Math.round(a.offsetMs)}ms · ` +
           `${noteName} · structure: ${nVerse} couplets / ${nChorus} refrains détectés`;
         $('#status-text').textContent = 'Auto-Remix Unicorn appliqué : couplets posés / refrains qui tapent. ▶ Lecture.';
-        // Charge l'éditeur d'arrangement par section.
         if (a.structure && this.sectionEditor) this.sectionEditor.load(a.structure);
-        // L'analyseur a déjà démarré la lecture synchronisée : reflète le transport.
         $('#btn-play').classList.add('active');
         $('#btn-play').textContent = '❚❚';
       } catch (e) {
@@ -474,7 +421,6 @@ export class UIController {
     });
   }
 
-  /** Lien de recherche du BPM en ligne (rempli avec le nom du fichier). */
   _bindBpmSearch() {
     const link = $('#bpm-search');
     const update = () => {
@@ -484,18 +430,14 @@ export class UIController {
       link.href = 'https://www.google.com/search?q=' + q;
     };
     update();
-    // pointerdown se déclenche avant la navigation -> href à jour.
     link.addEventListener('pointerdown', update);
   }
 
-  /** Convertit une fréquence (Hz) en nom de note pour l'affichage. */
   _hzToNote(hz) {
     if (!hz || hz <= 0) return '—';
     const midi = Math.round(69 + 12 * Math.log2(hz / 440));
     return NOTE_NAMES[((midi % 12) + 12) % 12] + (Math.floor(midi / 12) - 1);
   }
-
-  /* ---------------- Clavier ---------------- */
 
   _bindKeyboard() {
     window.addEventListener('keydown', (e) => {
@@ -504,9 +446,6 @@ export class UIController {
     });
   }
 
-  /* ---------------- Synchro globale ---------------- */
-
-  /** Recale toute l'UI sur l'état courant (après load / MIDI). */
   syncAll() {
     for (const k of this.knobs) k.setValue(this.state.get(k.path), true);
     $('#bpm-input').value = this.state.get('transport.bpm');
