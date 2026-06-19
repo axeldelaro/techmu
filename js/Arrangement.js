@@ -34,21 +34,10 @@ export class Arrangement {
     this.beat = structure.beat;
     this.downbeat = structure.downbeat || 0;
 
-    const n = this.sections.length;
-    // Position de phrase (mesures consécutives de même type, base 0).
-    this.pp = new Array(n).fill(0);
-    for (let b = 0; b < n; b++)
-      this.pp[b] = (b > 0 && this.sections[b] === this.sections[b - 1]) ? this.pp[b - 1] + 1 : 0;
-
-    // Numéro de refrain (0,1,2,…) -> sert à FAIRE ÉVOLUER le style/intensité.
-    this.chorusNum = new Array(n).fill(0);
-    let cn = -1;
-    for (let b = 0; b < n; b++) {
-      if (this.sections[b] === 'chorus' && (b === 0 || this.sections[b - 1] !== 'chorus')) cn++;
-      this.chorusNum[b] = Math.max(0, cn);
-    }
-
-    this.drive = { chorus: 16, build: 9, verse: 7, intro: 4, outro: 4, trans: 8 };
+    this.driveDef = { chorus: 16, build: 9, verse: 7, intro: 4, outro: 4, trans: 8 };
+    this.duckDef = { chorus: 0.5, build: 0.3, verse: 0.18, trans: 0.28, intro: 0.05, outro: 0.05 };
+    this.intenDef = { chorus: 1, build: 0.6, verse: 0.45, trans: 0.5, intro: 0.12, outro: 0.12 };
+    this.rebuild();
 
     // Gamme mineure pentatonique pour le kick "tonal" (degrés en demi-tons).
     this.scale = [0, 3, 5, 7, 10, 12];
@@ -59,6 +48,31 @@ export class Arrangement {
       [0, 2, 3, 4],   // style 2 : riff montant
       [0, 3, 4, 5]    // style 3+ : riff large (climax)
     ];
+  }
+
+  /**
+   * Recalcule positions de phrase et numéros de refrain depuis l'état
+   * courant des sections (appelé après chaque édition de l'arrangement).
+   */
+  rebuild() {
+    this.sections = this.s.sections;
+    this.barSub = this.s.barSub;
+    const n = this.sections.length;
+    this.pp = new Array(n).fill(0);
+    for (let b = 0; b < n; b++)
+      this.pp[b] = (b > 0 && this.sections[b] === this.sections[b - 1]) ? this.pp[b - 1] + 1 : 0;
+    this.chorusNum = new Array(n).fill(0);
+    let cn = -1;
+    for (let b = 0; b < n; b++) {
+      if (this.sections[b] === 'chorus' && (b === 0 || this.sections[b - 1] !== 'chorus')) cn++;
+      this.chorusNum[b] = Math.max(0, cn);
+    }
+  }
+
+  /** Lecture d'un override par mesure avec repli sur le défaut du type. */
+  _ov(arrName, bar, type, defTable) {
+    const a = this.s[arrName];
+    return (a && a[bar] != null) ? a[bar] : (defTable ? defTable[type] : 1);
   }
 
   /** Hauteur (Hz) du kick "tonal" pour un temps donné d'un refrain. */
@@ -86,71 +100,75 @@ export class Arrangement {
     const f = this.barSub[bar] || 55;
     const pp = this.pp[bar];
     const eng = this.engine;
-    const dr = this.drive[type] || 8;
-    const Rnd = Math.random();
+
+    // ---- Overrides PAR SECTION (éditeur) avec repli sur les défauts ----
+    const dr = this._ov('drive', bar, type, this.driveDef);
+    const inten = this._ov('intensity', bar, type, this.intenDef);
+    const fade = this._ov('fade', bar, type, null);        // 0..1 (fondus)
+    const duckBase = this._ov('duck', bar, type, this.duckDef);
+    const duckAmt = duckBase * fade;                       // fondu -> moins de ducking aux bords
+    const V = (v) => v * fade;                             // vélocité atténuée par le fondu
+    if (fade < 0.04) return;                               // fondu total -> silence des kicks
+
+    // Seed déterministe par section (variations stables d'un export à l'autre).
+    const seed = (this.s.seed && this.s.seed[bar]) ? this.s.seed[bar] : 12345;
+    let _r = (seed ^ (stepGlobal * 2654435761)) >>> 0;
+    const Rnd = () => ((_r = (_r * 1664525 + 1013904223) >>> 0) / 4294967296);
 
     switch (type) {
       case 'chorus': {
-        const style = Math.min(this.chorusNum[bar], 3);   // évolue par refrain
+        const style = Math.min(this.chorusNum[bar], 3);
         const phraseBeat = (pp * 4 + q) % 4;
         const fk = this._kickFreq(f, style, phraseBeat);
         const gapBar = (pp % 8 === 7);
         const fillBar = (pp % 4 === 3);
+        const halfTime = inten < 0.3;                       // intensité faible -> half-time
 
-        if (fillBar && q === 3) {
-          // ROLL 16e montant (fill de fin de phrase).
-          eng.kick.trigger(time, 0.85, { tune: fk * Math.pow(2, six / 12), decay: 0.16, drive: dr });
-          if (six === 0) eng.duck(time, 0.5);
+        if (fillBar && q === 3 && inten >= 0.4) {
+          eng.kick.trigger(time, V(0.85), { tune: fk * Math.pow(2, six / 12), decay: 0.16, drive: dr });
+          if (six === 0) eng.duck(time, duckAmt);
         } else if (six === 0) {
-          if (!(gapBar && q === 0)) {
-            eng.kick.trigger(time, 0.95 + Rnd * 0.05, { tune: fk, decay: 0.5, drive: dr });
-            eng.duck(time, 0.5);
+          const skip = (gapBar && q === 0) || (halfTime && (q === 1 || q === 3));
+          if (!skip) {
+            eng.kick.trigger(time, V(0.95 + Rnd() * 0.05), { tune: fk, decay: 0.5, drive: dr });
+            eng.duck(time, duckAmt);
           }
         }
 
-        // ---- Variations de STYLE (originalité par refrain) ----
-        if (style >= 1 && six === 2 && (q === 1 || q === 3)) {
-          // rolling : kick offbeat (double-croche) sur certains temps
-          eng.kick.trigger(time, 0.55, { tune: fk, decay: 0.22, drive: dr });
-        }
-        if (style >= 2 && q === 2 && six === 2 && Rnd < 0.7) {
-          // triplet-ish ghost
-          eng.kick.trigger(time, 0.45, { tune: fk * 1.12, decay: 0.18, drive: dr });
-        }
-        if (style >= 3 && q >= 2 && six % 2 === 0) {
-          // climax : double-time sur la 2e moitié de mesure
-          eng.kick.trigger(time, 0.6, { tune: fk, decay: 0.2, drive: dr });
-        }
+        // Variations de style, conditionnées par l'INTENSITÉ réglée.
+        if (inten >= 0.5 && style >= 1 && six === 2 && (q === 1 || q === 3))
+          eng.kick.trigger(time, V(0.55), { tune: fk, decay: 0.22, drive: dr });
+        if (inten >= 0.6 && style >= 2 && q === 2 && six === 2 && Rnd() < 0.7)
+          eng.kick.trigger(time, V(0.45), { tune: fk * 1.12, decay: 0.18, drive: dr });
+        if (inten >= 0.8 && style >= 3 && q >= 2 && six % 2 === 0)
+          eng.kick.trigger(time, V(0.6), { tune: fk, decay: 0.2, drive: dr });
 
-        // ---- Percussion (densité croissante avec le style) ----
-        if (six === 2) eng.playHat(time, 0.1 + style * 0.02);
-        if (six === 0 && (q === 1 || q === 3)) eng.playClap(time, 0.2);
-        if (style >= 2 && six === 0 && q === 2 && Rnd < 0.5) eng.playHat(time, 0.1);
-        if (pp === 0 && stepInBar === 0) eng.playImpact(time);
+        if (six === 2) eng.playHat(time, V(0.1 + style * 0.02) * (0.5 + inten * 0.5));
+        if (six === 0 && (q === 1 || q === 3)) eng.playClap(time, V(0.2));
+        if (inten >= 0.6 && style >= 2 && six === 0 && q === 2 && Rnd() < 0.5) eng.playHat(time, V(0.1));
+        if (pp === 0 && stepInBar === 0 && fade > 0.5) eng.playImpact(time);
         break;
       }
 
       case 'verse': {
-        // POSÉ : kick half-time discret, ducking minimal -> musique en avant.
-        if (six === 0 && (q === 0 || q === 2)) {
-          eng.kick.trigger(time, q === 0 ? 0.72 : 0.6, { tune: f, decay: 0.5, drive: dr });
-          eng.duck(time, 0.18);
+        const beats = inten >= 0.25 ? [0, 2] : [0];
+        if (six === 0 && beats.includes(q)) {
+          eng.kick.trigger(time, V(q === 0 ? 0.72 : 0.6), { tune: f, decay: 0.5, drive: dr });
+          eng.duck(time, duckAmt);
         }
-        if (six === 2 && q % 2 === 1 && Rnd < 0.5) eng.playHat(time, 0.08);
+        if (six === 2 && q % 2 === 1 && Rnd() < 0.5 * inten + 0.2) eng.playHat(time, V(0.08));
         break;
       }
 
       case 'build': {
         if (six === 0 && (q === 0 || q === 2)) {
-          eng.kick.trigger(time, 0.7, { tune: f, decay: 0.45, drive: dr });
-          eng.duck(time, 0.3);
+          eng.kick.trigger(time, V(0.7), { tune: f, decay: 0.45, drive: dr });
+          eng.duck(time, duckAmt);
         }
         if (pp === 0 && stepInBar === 0) eng.playRiser(time, 2 * this.barLen);
-        // Dernière mesure avant le refrain -> VOCAL CHOPS accélérés + roll.
         if (this.sections[bar + 1] === 'chorus') {
-          // Tranche figée prise au début de la mesure (stutter du morceau).
           const chopOffset = this.downbeat + bar * this.barLen;
-          const gate = stepInBar < 8 ? 2 : 1;            // accélère en 2e moitié
+          const gate = stepInBar < 8 ? 2 : 1;
           if (stepInBar % gate === 0 && eng.sampleBuffer) {
             const sliceDur = (this.beat / 4) * gate * 0.9;
             eng.playSlice(time, chopOffset, sliceDur, 1, 0.55);
@@ -161,13 +179,13 @@ export class Arrangement {
       }
 
       case 'trans': {
-        if (six === 0 && q % 2 === 0) { eng.kick.trigger(time, 0.7, { tune: f, decay: 0.45, drive: dr }); eng.duck(time, 0.28); }
-        if (six === 2 && Rnd < 0.4) eng.playHat(time, 0.08);
+        if (six === 0 && q % 2 === 0) { eng.kick.trigger(time, V(0.7), { tune: f, decay: 0.45, drive: dr }); eng.duck(time, duckAmt); }
+        if (six === 2 && Rnd() < 0.4) eng.playHat(time, V(0.08));
         break;
       }
 
-      default: { // intro / outro : l'original respire (quasi a cappella)
-        if (six === 0 && q === 0 && Rnd < 0.2) eng.playHat(time, 0.06);
+      default: { // intro / outro
+        if (six === 0 && q === 0 && Rnd() < 0.2) eng.playHat(time, V(0.06));
         break;
       }
     }

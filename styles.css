@@ -207,6 +207,38 @@ body {
   border-radius:50%; background: var(--accent-2); }
 .seq-cell.playhead { outline: 2px solid #fff; outline-offset: -2px; }
 
+/* ---------- Arrangement editor ---------- */
+.arrange-timeline { display: flex; gap: 2px; height: 56px; width: 100%; align-items: stretch;
+  background: #060708; border: 1px solid var(--edge); border-radius: 4px; padding: 3px; overflow: hidden; }
+.arrange-hint { color: var(--txt-dim); font-size: .8rem; margin: auto; }
+.seg {
+  position: relative; min-width: 6px; border-radius: 3px; cursor: pointer; overflow: hidden;
+  display: flex; align-items: center; justify-content: center; transition: filter .1s, outline .1s;
+  font-size: .58rem; color: #000; font-weight: 700; text-transform: uppercase; letter-spacing: .5px;
+}
+.seg:hover { filter: brightness(1.15); }
+.seg.sel { outline: 2px solid #fff; outline-offset: -2px; z-index: 2; }
+.seg.playing { box-shadow: 0 0 0 2px var(--accent-2) inset; }
+.seg.t-chorus { background: linear-gradient(var(--accent), #c22); }
+.seg.t-verse  { background: linear-gradient(#3bc6ff, #1c8fbf); }
+.seg.t-build  { background: linear-gradient(var(--accent-2), #c9a015); }
+.seg.t-trans  { background: linear-gradient(#9aa3ad, #6b7079); }
+.seg.t-intro, .seg.t-outro { background: linear-gradient(#4a4f57, #2a2e36); color: var(--txt-dim); }
+.seg-fade { position: absolute; top: 0; bottom: 0; width: 30%;
+  background: linear-gradient(90deg, rgba(0,0,0,.55), transparent); pointer-events: none; }
+.seg-fade.out { right: 0; transform: scaleX(-1); }
+
+.arrange-editor { margin-top: 12px; padding: 12px; background: var(--panel-2);
+  border: 1px solid var(--edge); border-radius: 4px; }
+.arrange-editor h3 { margin: 0 0 10px; font-size: .85rem; letter-spacing: 1px; }
+.ae-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.ae-ctrl { display: flex; flex-direction: column; gap: 4px; font-size: .72rem; color: var(--txt-dim); }
+.ae-ctrl input[type=range] { width: 100%; }
+.ae-ctrl .ae-val { color: var(--acid); font-weight: 700; }
+.ae-ctrl select { background: #0d0f12; color: var(--txt); border: 1px solid var(--edge); border-radius: 4px; padding: 5px; }
+.ae-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; align-items: center; }
+.ae-chk { display: flex; align-items: center; gap: 5px; color: var(--txt-dim); font-size: .72rem; }
+
 /* ---------- Statusbar ---------- */
 .statusbar {
   display: flex; align-items: center; gap: 10px; padding: 8px 16px;

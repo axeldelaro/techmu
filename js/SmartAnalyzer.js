@@ -19,6 +19,7 @@
 
 import { midiToFreq } from './utils.js';
 import { Arrangement } from './Arrangement.js';
+import { buildSegments } from './SectionModel.js';
 
 /* ---------------------------------------------------------------------
    CODE DU WORKER DSP (chaîne de caractères -> Blob -> Worker).
@@ -572,7 +573,9 @@ export class SmartAnalyzer {
        On branche le moteur d'arrangement sur le Scheduler : couplets posés,
        refrains qui explosent, basses accordées par section. */
     if (st && st.sections && st.sections.length) {
+      buildSegments(st);                          // segments éditables + arrays par mesure
       this.arrangement = new Arrangement(this.engine, st);
+      this.structure = st;
       if (this.scheduler) this.scheduler.arrangement = this.arrangement;
     } else {
       // Repli : pas de structure -> pattern 4/4 simple.

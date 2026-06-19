@@ -13,6 +13,7 @@ import { MidiController } from './MidiController.js';
 import { Recorder } from './Recorder.js';
 import { OfflineRenderer } from './OfflineRenderer.js';
 import { SmartAnalyzer } from './SmartAnalyzer.js';
+import { SectionEditor } from './SectionEditor.js';
 import { UIController } from './UIController.js';
 import { $ } from './utils.js';
 
@@ -57,8 +58,11 @@ async function boot() {
   // 6c) Export rapide (bounce hors-ligne via OfflineAudioContext).
   const offlineRenderer = new OfflineRenderer(engine, state, scheduler);
 
+  // 6d) Éditeur d'arrangement par section.
+  const sectionEditor = new SectionEditor({ state, scheduler });
+
   // 7) Contrôleur d'interface : câble tout au DOM.
-  const ui = new UIController({ state, engine, scheduler, visualizer, midi, recorder, smartAnalyzer, offlineRenderer });
+  const ui = new UIController({ state, engine, scheduler, visualizer, midi, recorder, smartAnalyzer, offlineRenderer, sectionEditor });
   ui.build();
 
   // Démarre les visualisations.
@@ -69,7 +73,7 @@ async function boot() {
   $('#status-text').textContent = 'Moteur audio initialisé. Importez un sample ou lancez le séquenceur.';
 
   // Expose pour le debug en console.
-  window.UPTEMPO = { state, engine, scheduler, ui, visualizer, midi, recorder, smartAnalyzer, offlineRenderer };
+  window.UPTEMPO = { state, engine, scheduler, ui, visualizer, midi, recorder, smartAnalyzer, offlineRenderer, sectionEditor };
 }
 
 bootBtn.addEventListener('click', boot);

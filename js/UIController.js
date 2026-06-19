@@ -34,8 +34,12 @@ export class UIController {
     this._bindAutoRemix();
     this._bindKeyboard();
 
-    // Playhead du séquenceur (mise à jour depuis l'horloge audio).
-    this.scheduler.onStep = (step) => this._highlightStep(step);
+    // Playhead du séquenceur + surbrillance de la section en lecture.
+    this.scheduler.onStep = (step) => {
+      this._highlightStep(step);
+      if (this.scheduler.arrangement && this.sectionEditor)
+        this.sectionEditor.highlightBar(Math.floor(this.scheduler.stepGlobal / 16));
+    };
 
     // Re-synchro complète de l'UI après un load d'état.
     this.state.on('*', () => this.syncAll());
@@ -355,6 +359,8 @@ export class UIController {
           `IA ▸ BPM ${a.bpm} · kick ${this.state.get('transport.bpm')} · downbeat ${Math.round(a.offsetMs)}ms · ` +
           `${noteName} · structure: ${nVerse} couplets / ${nChorus} refrains détectés`;
         $('#status-text').textContent = 'Auto-Remix Unicorn appliqué : couplets posés / refrains qui tapent. ▶ Lecture.';
+        // Charge l'éditeur d'arrangement par section.
+        if (a.structure && this.sectionEditor) this.sectionEditor.load(a.structure);
         // L'analyseur a déjà démarré la lecture synchronisée : reflète le transport.
         $('#btn-play').classList.add('active');
         $('#btn-play').textContent = '❚❚';
