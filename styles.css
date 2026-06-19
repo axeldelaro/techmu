@@ -83,6 +83,8 @@ body {
 }
 .t-btn.autoremix:hover { filter: brightness(1.12); }
 .t-btn.autoremix.busy { animation: pulse .8s infinite; filter: saturate(.6); }
+.t-btn.export { color: var(--blue); border-color: #2a6; }
+.t-btn.export.busy { animation: pulse .8s infinite; }
 
 /* Lecture des résultats d'analyse IA (v11) */
 .analysis-readout {

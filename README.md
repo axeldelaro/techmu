@@ -33,6 +33,7 @@ Puis ouvrez <http://localhost:8000>, cliquez **« Initialiser le moteur audio »
 | `Visualizer` | Oscilloscope + spectrogramme + VU-mètres RMS/Peak (`AnalyserNode`) |
 | `MidiController` | Web MIDI — mapping CC → knobs (MIDI Learn par clic droit) |
 | `Recorder` | Export audio temps réel — WebM (MediaRecorder) ou WAV 16-bit |
+| `OfflineRenderer` | **Export rapide** : bounce hors-ligne (`OfflineAudioContext`) plus rapide que le temps réel, honore tous les réglages |
 | `UIController` | Vue/Contrôleur — knobs, séquenceur, transport, câblage DOM |
 
 ## Prise en main rapide
@@ -45,5 +46,7 @@ Puis ouvrez <http://localhost:8000>, cliquez **« Initialiser le moteur audio »
 - **Knobs** : glisser verticalement (souris/tactile), `Shift` = réglage fin,
   molette pour ajuster. **Clic droit** sur un knob = *MIDI Learn*.
 - **Build-up** : maintenir le bouton pour le stutter/beatmasher.
-- **REC** : clic = export WebM ; `Shift+clic` = export WAV.
+- **EXPORT RAPIDE** : bounce hors-ligne en `.wav` (rendu plus rapide que le
+  temps réel, sans rejouer le morceau) — applique tous tes réglages courants.
+- **REC** : enregistrement temps réel — clic = WebM ; `Shift+clic` = WAV.
 - **SAVE/LOAD** : persistance de l'état complet dans le navigateur.

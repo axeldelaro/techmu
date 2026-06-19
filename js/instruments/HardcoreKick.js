@@ -38,9 +38,12 @@ export class HardcoreKick {
     this.levelGain.connect(destination);
 
     this._applyParams();
-    // Réagit aux changements de la section kick.
-    this.state.on('kick', () => this._applyParams());
+    // Réagit aux changements de la section kick (désabonnable pour l'offline).
+    this._unsub = this.state.on('kick', () => this._applyParams());
   }
+
+  /** Détache les abonnements (instances offline jetables). */
+  dispose() { if (this._unsub) { this._unsub(); this._unsub = null; } }
 
   /** Applique les paramètres d'état sur la chaîne fixe. */
   _applyParams() {

@@ -29,6 +29,7 @@ export class UIController {
     this._bindSelectsAndChecks();
     this._bindSaveLoad();
     this._bindRecord();
+    this._bindExport();
     this._bindBuildup();
     this._bindAutoRemix();
     this._bindKeyboard();
@@ -178,7 +179,18 @@ export class UIController {
   }
 
   play() {
-    this.scheduler.start();
+    // En mode Auto-Remix, Play relance le remix calé sur le downbeat
+    // (séquenceur + sample synchronisés). Sinon, lecture du pattern manuel.
+    if (this.scheduler.arrangement) {
+      const ctx = this.engine.ctx;
+      const startAt = ctx.currentTime + 0.12;
+      const downbeat = (this.scheduler.arrangement.s && this.scheduler.arrangement.s.downbeat) || 0;
+      this.scheduler.stop();
+      if (this.engine.sampleBuffer) this.engine.playSampleAt(startAt, downbeat);
+      this.scheduler.start(startAt);
+    } else {
+      this.scheduler.start();
+    }
     $('#btn-play').classList.add('active');
     $('#btn-play').textContent = '❚❚';
     $('#status-text').textContent = 'Lecture…';
@@ -186,9 +198,9 @@ export class UIController {
 
   stop() {
     this.scheduler.stop();
-    // Sort du mode Auto-Remix : on rend la main au séquenceur manuel.
-    this.scheduler.arrangement = null;
     this.engine.stopSample();
+    // NB : on garde l'arrangement (le "projet" remix) pour pouvoir
+    // l'exporter et le relancer ; il n'est pas effacé au Stop.
     $('#btn-play').classList.remove('active');
     $('#btn-play').textContent = '▶';
     $$('.seq-cell').forEach((c) => c.classList.remove('playhead'));
@@ -268,6 +280,34 @@ export class UIController {
         btn.classList.remove('active');
         btn.textContent = '● REC';
         $('#status-text').textContent = 'Export terminé (téléchargement).';
+      }
+    });
+  }
+
+  /* ---------------- Export rapide (bounce offline) ---------------- */
+
+  _bindExport() {
+    const btn = $('#btn-export');
+    btn.addEventListener('click', async () => {
+      if (btn.classList.contains('busy')) return;
+      if (!this.engine.sampleBuffer && !this.scheduler.arrangement) {
+        // Rien à exporter d'utile : on prévient mais on rend quand même le pattern.
+        $('#status-text').textContent = 'Export : aucun sample — rendu du pattern courant.';
+      }
+      btn.classList.add('busy');
+      const label = btn.textContent;
+      btn.textContent = '⤓ RENDU…';
+      $('#status-text').textContent = 'Bounce hors-ligne (plus rapide que le temps réel)…';
+      try {
+        await this.offlineRenderer.exportWav((p) => {
+          btn.textContent = `⤓ ${p}%`;
+        });
+        $('#status-text').textContent = 'Export terminé : uptempo-export.wav téléchargé.';
+      } catch (e) {
+        $('#status-text').textContent = 'Export : erreur — ' + e.message;
+      } finally {
+        btn.classList.remove('busy');
+        btn.textContent = label;
       }
     });
   }
