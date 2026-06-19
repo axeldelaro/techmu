@@ -245,17 +245,80 @@ export class AudioEngine {
   /**
    * Programme un coup de ducking sur le sample, synchronisé au kick.
    * @param {number} time - heure du kick (s)
+   * @param {number} [amount] - profondeur 0..1 (override de fx.sidechainAmount).
+   *   Permet à l'arrangement de ducker peu en couplet, plus en refrain,
+   *   tout en gardant l'original bien présent (style Unicorn On K).
    */
-  duck(time) {
+  duck(time, amount) {
     const fx = this.state.get('fx');
     if (!fx.sidechainOn) return;
+    const amt = amount != null ? amount : fx.sidechainAmount;
     const g = this.sampleDuck.gain;
-    const floor = clamp(1 - fx.sidechainAmount, 0.0001, 1);
-    // Chute quasi instantanée puis remontée (release) -> effet "pompe".
+    const floor = clamp(1 - amt, 0.0001, 1);
     g.cancelScheduledValues(time);
     g.setValueAtTime(1, time);
     g.linearRampToValueAtTime(floor, time + 0.005);
     g.linearRampToValueAtTime(1, time + fx.sidechainRelease);
+  }
+
+  /* =================================================================
+     PERCUSSION & FX synthétiques (arrangement Auto-Remix).
+     Petits générateurs éphémères branchés sur le bus master.
+     ================================================================= */
+  /** Hi-hat : bruit court filtré passe-haut. */
+  playHat(time, amp = 0.12) {
+    const ctx = this.ctx;
+    const src = ctx.createBufferSource(); src.buffer = this.kick.noiseBuffer; src.loop = true;
+    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 7000;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(amp, time);
+    g.gain.exponentialRampToValueAtTime(0.0001, time + 0.04);
+    src.connect(hp).connect(g).connect(this.busInput);
+    src.start(time); src.stop(time + 0.06);
+  }
+  /** Clap : 3 salves de bruit en bande passante. */
+  playClap(time, amp = 0.22) {
+    const ctx = this.ctx;
+    for (let k = 0; k < 3; k++) {
+      const t = time + k * 0.008;
+      const src = ctx.createBufferSource(); src.buffer = this.kick.noiseBuffer; src.loop = true;
+      const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 1700; bp.Q.value = 1.2;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(amp, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.07);
+      src.connect(bp).connect(g).connect(this.busInput);
+      src.start(t); src.stop(t + 0.09);
+    }
+  }
+  /** Impact de drop : boom sub + crash de bruit. */
+  playImpact(time) {
+    const ctx = this.ctx;
+    const osc = ctx.createOscillator(); osc.type = 'sine';
+    const g = ctx.createGain();
+    osc.frequency.setValueAtTime(80, time);
+    osc.frequency.exponentialRampToValueAtTime(35, time + 0.2);
+    g.gain.setValueAtTime(0.9, time);
+    g.gain.exponentialRampToValueAtTime(0.0001, time + 0.4);
+    osc.connect(g).connect(this.busInput);
+    osc.start(time); osc.stop(time + 0.45);
+    const src = ctx.createBufferSource(); src.buffer = this.kick.noiseBuffer; src.loop = true;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 3500; bp.Q.value = 0.8;
+    const ng = ctx.createGain(); ng.gain.setValueAtTime(0.35, time); ng.gain.exponentialRampToValueAtTime(0.0001, time + 0.35);
+    src.connect(bp).connect(ng).connect(this.busInput); src.start(time); src.stop(time + 0.4);
+  }
+  /** Riser de build-up : bruit dont la bande monte + volume croissant. */
+  playRiser(time, dur) {
+    const ctx = this.ctx;
+    const src = ctx.createBufferSource(); src.buffer = this.kick.noiseBuffer; src.loop = true;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 1.5;
+    bp.frequency.setValueAtTime(500, time);
+    bp.frequency.exponentialRampToValueAtTime(8000, time + dur);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, time);
+    g.gain.exponentialRampToValueAtTime(0.28, time + dur);
+    g.gain.linearRampToValueAtTime(0.0001, time + dur + 0.05);
+    src.connect(bp).connect(g).connect(this.busInput);
+    src.start(time); src.stop(time + dur + 0.1);
   }
 
   /* =================================================================
@@ -320,15 +383,20 @@ export class AudioEngine {
      ================================================================= */
   configureAutoSidechain() {
     const t = this.ctx.currentTime;
-    this.scComp.threshold.setValueAtTime(-30, t); // seuil agressif
-    this.scComp.ratio.setValueAtTime(20, t);      // 20:1
-    this.scComp.attack.setValueAtTime(0.003, t);  // 3 ms
-    this.scComp.release.setValueAtTime(0.20, t);
-    this.scComp.knee.setValueAtTime(2, t);
-    // Active le ducking et accentue sa profondeur/relâche pour la pompe.
+    // Style Unicorn On K : compresseur "glue" doux, PAS une pompe extrême.
+    // L'original doit rester au premier plan ; la profondeur réelle du
+    // ducking est gérée par l'arrangement (peu en couplet, plus en refrain).
+    this.scComp.threshold.setValueAtTime(-16, t);
+    this.scComp.ratio.setValueAtTime(4, t);
+    this.scComp.attack.setValueAtTime(0.004, t);
+    this.scComp.release.setValueAtTime(0.16, t);
+    this.scComp.knee.setValueAtTime(6, t);
     this.state.set('fx.sidechainOn', true);
-    this.state.set('fx.sidechainAmount', 0.85);
-    this.state.set('fx.sidechainRelease', 0.20);
+    this.state.set('fx.sidechainAmount', 0.4);   // ducking léger par défaut
+    this.state.set('fx.sidechainRelease', 0.16);
+    // L'original mène : volume haut, pas de pitch-shift.
+    this.state.set('sample.level', 0.98);
+    this.state.set('fx.masterLevel', 0.9);
   }
 
   /** Données temporelles (oscilloscope). */

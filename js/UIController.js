@@ -186,6 +186,9 @@ export class UIController {
 
   stop() {
     this.scheduler.stop();
+    // Sort du mode Auto-Remix : on rend la main au séquenceur manuel.
+    this.scheduler.arrangement = null;
+    this.engine.stopSample();
     $('#btn-play').classList.remove('active');
     $('#btn-play').textContent = '▶';
     $$('.seq-cell').forEach((c) => c.classList.remove('playhead'));
@@ -305,10 +308,13 @@ export class UIController {
       try {
         const a = await this.smartAnalyzer.analyzeAndRemix({ autoplay: true });
         const noteName = this._hzToNote(a.fundamental);
+        const st = a.structure || {};
+        const nChorus = (st.sections || []).filter((s) => s === 'chorus').length;
+        const nVerse = (st.sections || []).filter((s) => s === 'verse').length;
         $('#analysis-readout').textContent =
           `IA ▸ BPM ${a.bpm} · kick ${this.state.get('transport.bpm')} · downbeat ${Math.round(a.offsetMs)}ms · ` +
-          `fond. ${a.fundamental.toFixed(1)}Hz (${noteName})`;
-        $('#status-text').textContent = 'Auto-Remix appliqué et calé. ▶ Lecture synchronisée.';
+          `${noteName} · structure: ${nVerse} couplets / ${nChorus} refrains détectés`;
+        $('#status-text').textContent = 'Auto-Remix Unicorn appliqué : couplets posés / refrains qui tapent. ▶ Lecture.';
         // L'analyseur a déjà démarré la lecture synchronisée : reflète le transport.
         $('#btn-play').classList.add('active');
         $('#btn-play').textContent = '❚❚';

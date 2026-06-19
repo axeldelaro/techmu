@@ -25,8 +25,10 @@ Puis ouvrez <http://localhost:8000>, cliquez **« Initialiser le moteur audio »
 |---|---|
 | `StateManager` | Source de vérité unique, observateurs, save/load JSON (localStorage) |
 | `AudioEngine` | Graphe master, limiter de mastering, sample player, sidechain, DJ filter, stutter, décodage worker |
-| `Scheduler` | Séquenceur **sample-accurate** (lookahead + Web Worker horloge), swing |
-| `HardcoreKick` | Synthèse de kick multi-layer + distorsion WaveShaper multi-courbes + EQ |
+| `Scheduler` | Séquenceur **sample-accurate** (lookahead + Web Worker horloge), swing, mode arrangement |
+| `HardcoreKick` | Synthèse de kick multi-layer + distorsion WaveShaper multi-courbes + EQ (overrides par hit) |
+| `SmartAnalyzer` | Analyse DSP (Web Worker) : BPM, downbeat, fondamentale **+ structure couplet/refrain + tonalité par section** |
+| `Arrangement` | Moteur d'arrangement temps réel **style Unicorn On K** : couplets posés / refrains qui explosent, original au premier plan |
 | `FX` (dans Engine) | DJ filter morphable LP/HP, sidechain ducking, beatmasher |
 | `Visualizer` | Oscilloscope + spectrogramme + VU-mètres RMS/Peak (`AnalyserNode`) |
 | `MidiController` | Web MIDI — mapping CC → knobs (MIDI Learn par clic droit) |

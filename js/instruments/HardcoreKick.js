@@ -120,10 +120,18 @@ export class HardcoreKick {
    * Déclenche un kick à l'instant `time` (horloge AudioContext).
    * @param {number} time  - heure absolue de déclenchement (s)
    * @param {number} [vel] - vélocité 0..1
+   * @param {object} [opts] - overrides par hit (arrangement Auto-Remix) :
+   *   opts.tune  (Hz)   -> fondamentale du body pour CE kick
+   *   opts.decay (s)    -> longueur de la queue (rumble) pour CE kick
+   *   opts.drive (1..n) -> pré-gain de distorsion programmé pour CE kick
    */
-  trigger(time, vel = 1) {
+  trigger(time, vel = 1, opts = null) {
     const k = this.state.get('kick');
     const ctx = this.ctx;
+    const tune = opts && opts.tune ? opts.tune : k.tune;
+    const decay = opts && opts.decay ? opts.decay : k.decay;
+    // Drive par hit (pour varier l'agressivité selon la section).
+    if (opts && opts.drive) this.driveGain.gain.setValueAtTime(opts.drive, time);
 
     // ---------- LAYER 1 : CLICK / PUNCH (transient) ----------
     // Oscillateur très court avec chute de pitch quasi instantanée.
@@ -131,7 +139,7 @@ export class HardcoreKick {
     click.type = 'triangle';
     const clickGain = ctx.createGain();
     click.frequency.setValueAtTime(k.clickPitch, time);
-    click.frequency.exponentialRampToValueAtTime(k.tune * 1.5, time + 0.008);
+    click.frequency.exponentialRampToValueAtTime(tune * 1.5, time + 0.008);
     clickGain.gain.setValueAtTime(k.clickAmount * vel, time);
     clickGain.gain.exponentialRampToValueAtTime(0.0001, time + 0.03);
     click.connect(clickGain).connect(this.driveGain);
@@ -146,14 +154,14 @@ export class HardcoreKick {
     const startPitch = Math.min(k.clickPitch * 0.5, 400);
     body.frequency.setValueAtTime(startPitch, time);
     // Chute de pitch -> "boom". Plus la chute est longue, plus c'est gras.
-    body.frequency.exponentialRampToValueAtTime(k.tune, time + 0.06);
+    body.frequency.exponentialRampToValueAtTime(tune, time + 0.06);
     // ADSR : attaque immédiate, decay réglable.
     bodyGain.gain.setValueAtTime(0.0001, time);
     bodyGain.gain.linearRampToValueAtTime(vel, time + 0.002);
-    bodyGain.gain.exponentialRampToValueAtTime(0.0001, time + k.decay);
+    bodyGain.gain.exponentialRampToValueAtTime(0.0001, time + decay);
     body.connect(bodyGain).connect(this.driveGain);
     body.start(time);
-    body.stop(time + k.decay + 0.05);
+    body.stop(time + decay + 0.05);
 
     // ---------- LAYER 3 : NOISE (texture industrielle) ----------
     if (k.noise > 0.001) {

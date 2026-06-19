@@ -18,6 +18,7 @@
    ===================================================================== */
 
 import { midiToFreq } from './utils.js';
+import { Arrangement } from './Arrangement.js';
 
 /* ---------------------------------------------------------------------
    CODE DU WORKER DSP (chaîne de caractères -> Blob -> Worker).
@@ -268,6 +269,122 @@ function detectFundamental(mono, sampleRate) {
   return bin * binHz;
 }
 
+/* =====================================================================
+   7) DÉTECTION DE STRUCTURE (couplet / refrain) — style "Unicorn On K".
+
+   Le refrain d'un morceau a + d'énergie ET + de brillance (aigus :
+   cymbales, guitares saturées) que le couplet. On extrait par fenêtres
+   de 250 ms : RMS (énergie) et HF (énergie des hautes fréquences via la
+   dérivée du signal). Un "score de refrain" = énergie × brillance permet
+   de classer chaque mesure (seuils par percentiles), puis on lisse et on
+   étiquette les sections : intro / couplet / build / refrain / outro.
+   ===================================================================== */
+function smoothArr(arr, w) {
+  const out = new Float32Array(arr.length);
+  for (let i = 0; i < arr.length; i++) {
+    let s = 0, c = 0;
+    for (let k = -w; k <= w; k++) { const j = i + k; if (j >= 0 && j < arr.length) { s += arr[j]; c++; } }
+    out[i] = s / c;
+  }
+  return out;
+}
+
+function detectStructure(pcm, sampleRate, bpm, offsetMs, fundamental) {
+  // Tempo uptempo cible (multiple du BPM détecté) -> grille des mesures.
+  let kbpm = bpm, mul = 1;
+  while (kbpm < 170) { kbpm = bpm * (++mul); }
+  if (kbpm > 215) kbpm = bpm * (mul - 1);
+  if (kbpm < 150) kbpm = bpm * 2;
+  const beat = 60 / kbpm, barLen = beat * 4;
+  const downbeat = (offsetMs || 0) / 1000;
+  const totalBars = Math.max(1, Math.floor((pcm.length / sampleRate - downbeat) / barLen));
+
+  // Features par 250 ms.
+  const HOP = Math.round(sampleRate * 0.25);
+  const rms = [], hf = []; let prev = 0;
+  for (let i = 0; i + HOP <= pcm.length; i += HOP) {
+    let e = 0, h = 0;
+    for (let j = 0; j < HOP; j++) { const m = pcm[i + j]; e += m * m; const d = m - prev; prev = m; h += d * d; }
+    rms.push(Math.sqrt(e / HOP)); hf.push(Math.sqrt(h / HOP));
+  }
+  const R = smoothArr(rms, 4), H = smoothArr(hf, 4);
+  let rmax = 1e-9, hmax = 1e-9;
+  for (let i = 0; i < R.length; i++) { if (R[i] > rmax) rmax = R[i]; if (H[i] > hmax) hmax = H[i]; }
+  const score = new Float32Array(R.length);
+  for (let i = 0; i < R.length; i++) score[i] = (R[i] / rmax) * (0.4 + 0.6 * H[i] / hmax);
+
+  // Seuils par percentiles.
+  const sortedS = Array.from(score).sort((a, b) => a - b);
+  const pct = (p) => sortedS[Math.min(sortedS.length - 1, Math.max(0, Math.floor(p * sortedS.length)))];
+  const HI = pct(0.60), LO = pct(0.42);
+  const frameClass = (t) => {
+    const k = Math.min(score.length - 1, Math.max(0, Math.floor(t / 0.25)));
+    return score[k] > HI ? 2 : score[k] < LO ? 0 : 1;
+  };
+
+  // Classe par mesure (majorité sur les 4 temps).
+  const barClass = new Array(totalBars);
+  for (let b = 0; b < totalBars; b++) {
+    const t0 = downbeat + b * barLen; const cnt = [0, 0, 0];
+    for (let f = 0; f < 4; f++) cnt[frameClass(t0 + f * beat)]++;
+    barClass[b] = cnt[2] >= 2 ? 2 : cnt[0] >= 3 ? 0 : 1;
+  }
+  // Lissage : absorbe les mesures isolées.
+  for (let pass = 0; pass < 3; pass++)
+    for (let b = 1; b < totalBars - 1; b++)
+      if (barClass[b] !== barClass[b - 1] && barClass[b] !== barClass[b + 1] && barClass[b - 1] === barClass[b + 1])
+        barClass[b] = barClass[b - 1];
+
+  // Étiquettes.
+  const sections = barClass.map(c => c === 2 ? 'chorus' : c === 0 ? 'verse' : 'trans');
+  let firstChorus = sections.indexOf('chorus'); if (firstChorus < 0) firstChorus = totalBars;
+  for (let b = 0; b < firstChorus; b++) sections[b] = 'intro';
+  for (let b = totalBars - 1; b >= 0 && sections[b] !== 'chorus'; b--) sections[b] = 'outro';
+  // Build = jusqu'à 2 mesures avant un refrain.
+  for (let b = 1; b < totalBars; b++)
+    if (sections[b] === 'chorus' && sections[b - 1] !== 'chorus') {
+      if (sections[b - 1] !== 'chorus') sections[b - 1] = 'build';
+      if (b - 2 >= 0 && sections[b - 2] !== 'chorus') sections[b - 2] = 'build';
+    }
+
+  // Tonalité PAR SECTION : la basse suit le refrain (autocorrélation du
+  // signal passe-bas de la section), repliée dans la plage sub 38..90 Hz.
+  const barSub = new Float32Array(totalBars);
+  let b = 0;
+  while (b < totalBars) {
+    let e = b; while (e < totalBars && sections[e] === sections[b]) e++;
+    let f;
+    if (sections[b] === 'chorus' || sections[b] === 'verse') {
+      const s0 = Math.floor((downbeat + b * barLen) * sampleRate);
+      const s1 = Math.min(pcm.length, s0 + sampleRate * 4);
+      f = sectionPitch(pcm, sampleRate, s0, s1);
+    } else f = fundamental;
+    if (!f || !isFinite(f)) f = fundamental || 73;
+    while (f > 90) f /= 2; while (f < 38) f *= 2;
+    for (let k = b; k < e; k++) barSub[k] = f;
+    b = e;
+  }
+
+  return { kbpm: Math.round(kbpm), beat, barLen, downbeat, totalBars, sections, barSub: Array.from(barSub) };
+}
+
+/** Pitch d'une plage par autocorrélation sur le signal passe-bas. */
+function sectionPitch(pcm, sampleRate, s0, s1) {
+  s0 = Math.max(0, s0); s1 = Math.min(pcm.length, s1);
+  if (s1 - s0 < sampleRate * 0.5) return 0;
+  // Passe-bas one-pole 160 Hz sur la tranche.
+  const len = s1 - s0; const x = new Float32Array(len);
+  const dt = 1 / sampleRate, rc = 1 / (2 * Math.PI * 160), al = dt / (rc + dt); let y = 0;
+  for (let i = 0; i < len; i++) { y += al * (pcm[s0 + i] - y); x[i] = y; }
+  let best = 0, bestc = -1;
+  for (let hz = 40; hz <= 180; hz += 1) {
+    const lag = Math.round(sampleRate / hz); let c = 0;
+    for (let i = 0; i + lag < len; i += 8) c += x[i] * x[i + lag];
+    if (c > bestc) { bestc = c; best = hz; }
+  }
+  return best;
+}
+
 /* ===== Orchestration de l'analyse ===== */
 function analyze(pcm, sampleRate) {
   // Limite la durée analysée pour le rythme (perf), garde tout pour la FFT.
@@ -281,7 +398,10 @@ function analyze(pcm, sampleRate) {
   const offsetMs = detectDownbeat(filtered, sampleRate);
   const fundamental = detectFundamental(pcm, sampleRate);
 
-  return { bpm, offsetMs, fundamental, confidence };
+  // v12 : structure complète (couplets / refrains) + tonalité par section.
+  const structure = detectStructure(pcm, sampleRate, bpm, offsetMs, fundamental);
+
+  return { bpm, offsetMs, fundamental, confidence, structure };
 }
 `;
 
@@ -359,52 +479,46 @@ export class SmartAnalyzer {
    */
   applyAutoRemix(a, opts = {}) {
     const state = this.state;
+    const st = a.structure;
 
-    /* ---- 1) TEMPO UPTEMPO ----
-       On vise une grille uptempo/HardTechno (~170-210 BPM). On dérive ce
-       tempo comme un multiple du BPM détecté pour que les kicks restent
-       calés sur la pulsation du morceau (kick toutes les 1/2 mesures).
-       IMPORTANT : on NE pitch PAS le morceau (playbackRate=1) -> il reste
-       reconnaissable ; seul le kick tourne en uptempo par-dessus. */
-    let target = opts.targetBpm || a.bpm || 180;
-    while (target < 170) target *= 2;
-    while (target > 215) target /= 2;
-    if (target < 150) target = (a.bpm || 90) * 2;
-    state.set('transport.bpm', Math.round(target));
-    state.set('sample.playbackRate', 1.0); // pas de chipmunk : musique au pitch d'origine
+    /* ---- 1) TEMPO UPTEMPO (grille des kicks) ----
+       kbpm calculé par l'analyse (multiple du BPM détecté). On NE pitch PAS
+       le morceau (playbackRate=1) -> il reste reconnaissable ; le kick
+       uptempo tourne par-dessus, calé sur le downbeat. */
+    const target = st ? st.kbpm : Math.round((a.bpm || 90) * 2);
+    state.set('transport.bpm', target);
+    state.set('sample.playbackRate', 1.0);
 
-    /* ---- 2) AUTO-TUNING du SUB-KICK ----
-       Fondamentale détectée -> repliée dans la plage sub (38..90 Hz). */
+    /* ---- 2) AUTO-TUNING du SUB-KICK (fondamentale globale, repli sub). */
     const fund = a.fundamental > 0 ? a.fundamental : 73;
-    const midi = Math.round(69 + 12 * Math.log2(fund / 440));
-    let subHz = midiToFreq(midi);
+    let subHz = midiToFreq(Math.round(69 + 12 * Math.log2(fund / 440)));
     while (subHz > 90) subHz /= 2;
     while (subHz < 38) subHz *= 2;
     state.set('kick.tune', +subHz.toFixed(1));
 
-    /* ---- 3) AUTO-SÉQUENÇAGE — GROS KICKS uniquement (zéro acid) ----
-       4-on-floor (pas 0,4,8,12) + fill 16e occasionnel pour casser le côté
-       trop automatique. Piste gater laissée propre. */
-    const seq = JSON.parse(JSON.stringify(state.get('sequencer')));
-    seq.kick = new Array(16).fill(false);
-    for (let i = 0; i < 16; i += 4) seq.kick[i] = true;     // 4/4
-    if (Math.random() < 0.6) seq.kick[14] = true;            // fill avant la boucle
-    if (Math.random() < 0.3) seq.kick[7] = true;             // ghost offbeat
-    seq.gater = new Array(16).fill(false);
-    // arrays acid neutralisés (instrument retiré)
-    seq.acid = new Array(16).fill(false);
-    state.set('sequencer', seq);
-
-    /* ---- 4) AUTO-DRIVE + RUMBLE ----
-       Distorsion agressive + decay long = kick qui "rumble" (Uptempo/Raw). */
+    /* ---- 3) SON DU KICK — gros, "greazy", rumble (decay long + drive). */
     state.set('kick.curve', 'hardclip');
     state.set('kick.drive', 0.85);
     state.set('kick.decay', 0.55);
     state.set('kick.eqGain', 8);
-    state.set('kick.noise', 0.15);
+    state.set('kick.noise', 0.12);
+    state.set('kick.level', 0.8);   // le kick reste SOUS la voix (original en avant)
 
-    /* ---- 5) SIDECHAIN agressif (pompe le morceau sous le kick). */
+    /* ---- 4) SIDECHAIN DOUX — l'original reste au premier plan. */
     this.engine.configureAutoSidechain();
+    state.set('sample.loop', false); // lecture unique : l'arrangement suit la structure
+
+    /* ---- 5) ARRANGEMENT STRUCTURÉ (style Unicorn On K) ----
+       On branche le moteur d'arrangement sur le Scheduler : couplets posés,
+       refrains qui explosent, basses accordées par section. */
+    if (st && st.sections && st.sections.length) {
+      this.arrangement = new Arrangement(this.engine, st);
+      if (this.scheduler) this.scheduler.arrangement = this.arrangement;
+    } else {
+      // Repli : pas de structure -> pattern 4/4 simple.
+      this.applyDefaultPattern();
+      if (this.scheduler) this.scheduler.arrangement = null;
+    }
 
     /* ---- 6) ALIGNEMENT DE PHASE + lecture synchronisée. */
     if (opts.autoplay !== false) {
@@ -423,6 +537,9 @@ export class SmartAnalyzer {
    */
   applyDefaultPattern() {
     const state = this.state;
+    // Repasse en mode séquenceur classique (pas d'arrangement).
+    this.arrangement = null;
+    if (this.scheduler) this.scheduler.arrangement = null;
     state.set('transport.bpm', 190);
     const seq = JSON.parse(JSON.stringify(state.get('sequencer')));
     seq.kick = new Array(16).fill(false);

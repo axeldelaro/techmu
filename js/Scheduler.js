@@ -40,6 +40,9 @@ export class Scheduler {
     /** callback UI : (stepIndex, time) -> void (mise en surbrillance du playhead). */
     this.onStep = null;
 
+    this.stepGlobal = 0;       // index de pas absolu
+    this.arrangement = null;   // moteur d'arrangement (Auto-Remix) ou null
+
     this._initWorker();
   }
 
@@ -82,6 +85,7 @@ export class Scheduler {
     // Décalage appliqué au pas impair qui SUIT : on ajoute du temps avant lui.
     this.nextNoteTime += secs16;
     this.current16th = (this.current16th + 1) % 16;
+    this.stepGlobal++; // index de pas absolu (ne boucle pas) pour l'arrangement
   }
 
   /** Calcule l'heure programmée d'un pas en tenant compte du swing. */
@@ -94,21 +98,26 @@ export class Scheduler {
 
   /** Programme tous les évènements du pas `step` à l'heure `time`. */
   _scheduleStep(step, time) {
-    const seq = this.state.get('sequencer');
     const swungTime = this._swungTime(time, step);
 
-    // --- Kick ---
+    // --- Mode ARRANGEMENT (Auto-Remix Unicorn On K) ---
+    // Si un moteur d'arrangement est branché, il décide de tout (kick par
+    // section, perc, ducking variable) à partir de l'index de pas GLOBAL.
+    if (this.arrangement) {
+      this.arrangement.tick(this.stepGlobal, swungTime);
+      if (this.onStep) this.onStep(step, swungTime);
+      return;
+    }
+
+    // --- Mode séquenceur classique (boucle 16 pas) ---
+    const seq = this.state.get('sequencer');
     if (seq.kick[step]) {
       this.engine.kick.trigger(swungTime, 1);
-      // Le kick déclenche le ducking sidechain (signal fantôme).
       this.engine.duck(swungTime);
     }
-    // --- Gater (coupure master) ---
     if (seq.gater[step]) {
       this.engine.gate(swungTime, this._secondsPer16th());
     }
-
-    // Notifie l'UI pour le playhead (peut être en retard sans impact audio).
     if (this.onStep) this.onStep(step, swungTime);
   }
 
@@ -134,6 +143,7 @@ export class Scheduler {
     if (this.isRunning) return this.nextNoteTime;
     this.isRunning = true;
     this.current16th = 0;
+    this.stepGlobal = 0;
     // Petite marge pour ne pas programmer dans le passé.
     this.nextNoteTime = startTime != null ? startTime : this.engine.ctx.currentTime + 0.05;
     this.worker.postMessage('start');
