@@ -7,6 +7,7 @@
 
 import { $, $$, el, NOTE_NAMES } from './utils.js';
 import { Knob } from './Knob.js';
+import { cloneStructure, compile } from './SectionModel.js';
 
 export class UIController {
   /**
@@ -31,6 +32,8 @@ export class UIController {
     this._bindSaveLoad();
     this._bindRecord();
     this._bindExport();
+    this._bindVariants();
+    this._bindBatch();
     this._bindBuildup();
     this._bindAutoRemix();
     this._bindKeyboard();
@@ -343,6 +346,68 @@ export class UIController {
         btn.classList.remove('busy');
         btn.textContent = label;
       }
+    });
+  }
+
+  /* ---------------- Variantes automatiques ---------------- */
+
+  _bindVariants() {
+    const btn = $('#btn-variants');
+    btn.addEventListener('click', async () => {
+      if (btn.classList.contains('busy')) return;
+      const arr = this.scheduler.arrangement;
+      if (!arr || !this.engine.sampleBuffer) {
+        $('#status-text').textContent = 'Variantes : lance d\'abord un Auto-Remix sur un morceau.';
+        return;
+      }
+      btn.classList.add('busy');
+      const label = btn.textContent;
+      // Chaque variante change l'esprit (mode de basse, gamme) + ré-aléatoirise les fills.
+      const configs = [
+        { bassMode: 'offbeat', scale: 'minorPent', tag: 'rolling' },
+        { bassMode: 'root', scale: 'phrygian', tag: 'dark' },
+        { bassMode: 'sustain', scale: 'minor', tag: 'heavy' }
+      ];
+      const snap = { bassMode: this.state.get('bass.mode'), scale: this.state.get('kick.scale') };
+      try {
+        for (let i = 0; i < configs.length; i++) {
+          const cfg = configs[i];
+          this.state.set('bass.mode', cfg.bassMode);
+          this.state.set('kick.scale', cfg.scale);
+          const clone = cloneStructure(arr.s);
+          clone.segments.forEach((s) => { s.seed = (Math.random() * 1e9) | 0; });
+          compile(clone);
+          btn.textContent = `⎘ ${i + 1}/3…`;
+          $('#status-text').textContent = `Variante ${i + 1}/3 (${cfg.tag})…`;
+          const blob = await this.offlineRenderer.renderToBlob(this.engine.sampleBuffer, clone, 'mp3',
+            (p) => { btn.textContent = `⎘ ${i + 1}/3 · ${p}%`; });
+          const ext = blob.type.includes('mpeg') ? 'mp3' : 'wav';
+          this.offlineRenderer._download(blob, `uptempo-variante-${i + 1}-${cfg.tag}.${ext}`);
+          await new Promise((r) => setTimeout(r, 500));
+        }
+        $('#status-text').textContent = '3 variantes téléchargées.';
+      } catch (e) {
+        $('#status-text').textContent = 'Variantes : erreur — ' + e.message;
+      } finally {
+        this.state.set('bass.mode', snap.bassMode);
+        this.state.set('kick.scale', snap.scale);
+        btn.classList.remove('busy');
+        btn.textContent = label;
+      }
+    });
+  }
+
+  /* ---------------- Traitement en lot ---------------- */
+
+  _bindBatch() {
+    const input = $('#batch-input');
+    $('#batch-btn').addEventListener('click', () => input.click());
+    input.addEventListener('change', async () => {
+      if (!input.files.length) return;
+      const format = $('#batch-wav').checked ? 'wav' : 'mp3';
+      $('#status-text').textContent = `Lot : traitement de ${input.files.length} morceau(x)…`;
+      await this.batchProcessor.run(input.files, format);
+      input.value = '';
     });
   }
 

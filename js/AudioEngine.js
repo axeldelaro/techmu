@@ -188,11 +188,21 @@ export class AudioEngine {
    * @returns {Promise<AudioBuffer>}
    */
   async loadFile(file, onProgress) {
+    this.sampleBuffer = await this.decodeFile(file, onProgress);
+    return this.sampleBuffer;
+  }
+
+  /**
+   * Décode un fichier en AudioBuffer SANS l'enregistrer (non destructif).
+   * Utilisé par le traitement en lot pour ne pas perturber la session.
+   * @param {File} file
+   * @param {(p:number)=>void} [onProgress]
+   * @returns {Promise<AudioBuffer>}
+   */
+  async decodeFile(file, onProgress) {
     onProgress?.(10);
     const arrayBuf = await file.arrayBuffer();
     onProgress?.(40);
-
-    // Passe par le worker (offload I/O + transfert zéro-copie).
     const transferred = await new Promise((resolve) => {
       const id = Math.random();
       const handler = (e) => {
@@ -203,12 +213,10 @@ export class AudioEngine {
       this._decoderWorker.addEventListener('message', handler);
       this._decoderWorker.postMessage({ id, buffer: arrayBuf }, [arrayBuf]);
     });
-
     onProgress?.(70);
-    // decodeAudioData : décodage PCM (asynchrone, hors thread JS principal).
-    this.sampleBuffer = await this.ctx.decodeAudioData(transferred);
+    const buf = await this.ctx.decodeAudioData(transferred);
     onProgress?.(100);
-    return this.sampleBuffer;
+    return buf;
   }
 
   /** Démarre la lecture du sample importé. */
@@ -333,6 +341,33 @@ export class AudioEngine {
     src.connect(g).connect(this.busInput);
     src.start(time, off, dur + 0.02);
     src.stop(time + dur + 0.03);
+  }
+
+  /** Reverse swell (cymbale inversée) : volume qui enfle puis coupe sec. */
+  playReverseSwell(time, dur, amp = 0.22) {
+    const ctx = this.ctx;
+    const src = ctx.createBufferSource(); src.buffer = this.kick.noiseBuffer; src.loop = true;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 6000; bp.Q.value = 0.6;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, time);
+    g.gain.exponentialRampToValueAtTime(amp, time + dur);   // enfle
+    g.gain.linearRampToValueAtTime(0.0001, time + dur + 0.02); // coupe sec
+    src.connect(bp).connect(g).connect(this.busInput);
+    src.start(time); src.stop(time + dur + 0.05);
+  }
+
+  /** Downlifter : balayage de bruit vers le bas (fin de drop / chute). */
+  playSweepDown(time, dur, amp = 0.2) {
+    const ctx = this.ctx;
+    const src = ctx.createBufferSource(); src.buffer = this.kick.noiseBuffer; src.loop = true;
+    const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 1.2;
+    bp.frequency.setValueAtTime(8000, time);
+    bp.frequency.exponentialRampToValueAtTime(200, time + dur);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(amp, time);
+    g.gain.exponentialRampToValueAtTime(0.0001, time + dur);
+    src.connect(bp).connect(g).connect(this.busInput);
+    src.start(time); src.stop(time + dur + 0.05);
   }
 
   /** Riser de build-up : bruit dont la bande monte + volume croissant. */

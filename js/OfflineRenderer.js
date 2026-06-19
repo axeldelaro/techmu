@@ -35,75 +35,78 @@ export class OfflineRenderer {
    * @returns {Promise<void>}
    */
   async render(format = 'mp3', onProgress) {
-    // MP3 indisponible si l'encodeur n'est pas chargé -> repli WAV.
+    const buffer = this.engine.sampleBuffer;
+    const structure = this.scheduler.arrangement ? this.scheduler.arrangement.s : null;
+    const blob = await this.renderToBlob(buffer, structure, format, onProgress);
+    this._download(blob, `uptempo-export.${blob.type.includes('mpeg') ? 'mp3' : 'wav'}`);
+  }
+
+  /**
+   * Rend un buffer + une structure d'arrangement en Blob (sans téléchargement).
+   * Réutilisé par l'export simple ET le traitement en lot. Applique les
+   * réglages de son COURANTS (kick/bass/fx) à chaque rendu.
+   * @param {AudioBuffer} buffer
+   * @param {object|null} structure - structure d'arrangement (ou null = pattern)
+   * @param {('mp3'|'wav')} [format]
+   * @param {(p:number)=>void} [onProgress]
+   * @returns {Promise<Blob>}
+   */
+  async renderToBlob(buffer, structure, format = 'mp3', onProgress) {
     if (format === 'mp3' && typeof lamejs === 'undefined') format = 'wav';
     const sr = this.engine.ctx.sampleRate;
-    const buffer = this.engine.sampleBuffer;
-    const arr = this.scheduler.arrangement;          // arrangement actif ?
-    const structure = arr ? arr.s : null;
     const downbeat = structure ? structure.downbeat : 0;
 
-    // ---- Durée du rendu ----
     let dur;
-    if (structure && buffer) dur = (buffer.duration - downbeat) + 1.0; // arrangement complet + queue
+    if (structure && buffer) dur = (buffer.duration - downbeat) + 1.0;
     else if (buffer) dur = buffer.duration + 0.5;
-    else dur = (60 / this.state.get('transport.bpm')) * 4 * 16;        // 16 mesures si pas de sample
+    else dur = (60 / this.state.get('transport.bpm')) * 4 * 16;
     dur = Math.max(2, dur);
 
     onProgress?.(5);
-    const length = Math.ceil(dur * sr);
-    const octx = new OfflineAudioContext(2, length, sr);
+    const octx = new OfflineAudioContext(2, Math.ceil(dur * sr), sr);
+    const facade = this._buildGraph(octx, buffer);
 
-    // ---- Reconstruit le graphe master dans le contexte offline ----
-    const facade = this._buildGraph(octx);
-
-    // ---- Lecture du sample (aligné comme en live) ----
     if (buffer) {
       const s = this.state.get('sample');
       const src = octx.createBufferSource();
       src.buffer = buffer;
       src.playbackRate.value = s.playbackRate;
       src.detune.value = s.detune;
-      if (structure) {
-        src.loop = false;
-        src.connect(facade.sampleDuck);
-        src.start(0, Math.max(0, downbeat));         // démarre au downbeat
-      } else {
-        src.loop = s.loop;
-        src.connect(facade.sampleDuck);
-        src.start(0, 0);
-      }
+      src.loop = structure ? false : s.loop;
+      src.connect(facade.sampleDuck);
+      src.start(0, structure ? Math.max(0, downbeat) : 0);
     }
 
     onProgress?.(15);
-
-    // ---- Programme TOUS les évènements (scheduling déterministe) ----
     this._scheduleAll(facade, octx, dur, structure);
-
     onProgress?.(30);
 
-    // ---- Rendu (plus rapide que le temps réel) ----
-    const rendered = await octx.startRendering();
-    facade.kick.dispose(); facade.subBass.dispose();  // évite les fuites d'abonnement
+    // Progression PENDANT le rendu via suspend()/resume() : évite l'impression
+    // de blocage à 30% sur les longs morceaux et confirme l'avancement réel.
+    const total = octx.length / sr;
+    const SLICES = 15;
+    for (let i = 1; i < SLICES; i++) {
+      const at = total * i / SLICES;
+      octx.suspend(at).then(() => {
+        onProgress?.(30 + Math.round((i / SLICES) * 30));
+        octx.resume();
+      }).catch(() => {});
+    }
 
+    const rendered = await octx.startRendering();
+    facade.kick.dispose(); facade.subBass.dispose();
     onProgress?.(60);
 
-    // ---- Encodage + téléchargement ----
-    if (format === 'mp3') {
-      const blob = this._encodeMp3(rendered, (p) => onProgress?.(60 + Math.round(p * 0.4)));
-      this._download(blob, 'uptempo-export.mp3');
-    } else {
-      const blob = this._encodeWav(rendered);
-      this._download(blob, 'uptempo-export.wav');
-    }
+    if (format === 'mp3') return this._encodeMp3(rendered, (p) => onProgress?.(60 + Math.round(p * 0.4)));
     onProgress?.(100);
+    return this._encodeWav(rendered);
   }
 
   /**
    * Construit le graphe master + chaîne sample dans `octx`, à l'identique
    * du moteur live, et renvoie une façade compatible avec l'Arrangement.
    */
-  _buildGraph(octx) {
+  _buildGraph(octx, buffer) {
     const state = this.state;
     const fx = state.get('fx');
 
@@ -142,7 +145,6 @@ export class OfflineRenderer {
     const subBass = new SubBass(octx, busInput, state);
 
     // Façade exposant l'API attendue par l'Arrangement / le pattern.
-    const buffer = this.engine.sampleBuffer;
     const facade = {
       ctx: octx, busInput, sampleDuck, gaterGain, kick, subBass, sampleBuffer: buffer, state,
       playSlice: (time, offset, dur, rate = 1, amp = 0.7) => {
@@ -192,6 +194,22 @@ export class OfflineRenderer {
         g.gain.setValueAtTime(0.0001, time); g.gain.exponentialRampToValueAtTime(0.28, time + durR);
         g.gain.linearRampToValueAtTime(0.0001, time + durR + 0.05);
         src.connect(bp).connect(g).connect(busInput); src.start(time); src.stop(time + durR + 0.1);
+      },
+      playReverseSwell: (time, dur, amp = 0.22) => {
+        const src = octx.createBufferSource(); src.buffer = kick.noiseBuffer; src.loop = true;
+        const bp = octx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 6000; bp.Q.value = 0.6;
+        const g = octx.createGain();
+        g.gain.setValueAtTime(0.0001, time); g.gain.exponentialRampToValueAtTime(amp, time + dur);
+        g.gain.linearRampToValueAtTime(0.0001, time + dur + 0.02);
+        src.connect(bp).connect(g).connect(busInput); src.start(time); src.stop(time + dur + 0.05);
+      },
+      playSweepDown: (time, dur, amp = 0.2) => {
+        const src = octx.createBufferSource(); src.buffer = kick.noiseBuffer; src.loop = true;
+        const bp = octx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 1.2;
+        bp.frequency.setValueAtTime(8000, time); bp.frequency.exponentialRampToValueAtTime(200, time + dur);
+        const g = octx.createGain();
+        g.gain.setValueAtTime(amp, time); g.gain.exponentialRampToValueAtTime(0.0001, time + dur);
+        src.connect(bp).connect(g).connect(busInput); src.start(time); src.stop(time + dur + 0.05);
       }
     };
     return facade;
@@ -219,7 +237,9 @@ export class OfflineRenderer {
    * via l'Arrangement (si actif) ou le pattern 16 pas classique.
    */
   _scheduleAll(facade, octx, dur, structure) {
-    const bpm = this.state.get('transport.bpm');
+    // Grille = tempo de CETTE structure (essentiel pour le traitement en lot,
+    // chaque morceau ayant son propre kbpm), sinon le transport courant.
+    const bpm = structure && structure.kbpm ? structure.kbpm : this.state.get('transport.bpm');
     const secs16 = (60 / bpm) / 4;
 
     if (structure) {

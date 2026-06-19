@@ -175,6 +175,10 @@ export class Arrangement {
         if (six === 0 && (q === 1 || q === 3)) eng.playClap(time, V(0.2));
         if (inten >= 0.6 && style >= 2 && six === 0 && q === 2 && Rnd() < 0.5) eng.playHat(time, V(0.1));
         if (pp === 0 && stepInBar === 0 && fade > 0.5) eng.playImpact(time);
+        // Downlifter en toute fin de refrain (transition vers la suite).
+        if (this.sections[bar + 1] !== 'chorus' && pp >= 0 && stepInBar === 12 &&
+            (bar + 1 >= this.sections.length || this.sections[bar + 1] !== 'chorus') && eng.playSweepDown)
+          eng.playSweepDown(time, this.beat * 3, 0.18);
         break;
       }
 
@@ -194,6 +198,9 @@ export class Arrangement {
           eng.duck(time, duckAmt);
         }
         if (pp === 0 && stepInBar === 0) eng.playRiser(time, 2 * this.barLen);
+        // Reverse swell (cymbale inversée) sur la mesure juste avant le drop.
+        if (this.sections[bar + 1] === 'chorus' && stepInBar === 0 && eng.playReverseSwell)
+          eng.playReverseSwell(time, this.barLen, 0.2);
         if (this.sections[bar + 1] === 'chorus') {
           const chopOffset = this.downbeat + bar * this.barLen;
           const gate = stepInBar < 8 ? 2 : 1;

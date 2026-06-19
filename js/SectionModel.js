@@ -54,12 +54,18 @@ export function buildSegments(st) {
     // Basse par défaut = médiane détectée sur le segment.
     const subs = st.barSub.slice(b, e).filter((x) => x > 0).sort((a, b) => a - b);
     const sub = subs.length ? subs[subs.length >> 1] : 55;
+    // Énergie moyenne de la section -> adapte l'intensité/drive du drop au morceau.
+    let en = 0, ec = 0;
+    if (st.energy) { for (let k = b; k < e; k++) { en += st.energy[k]; ec++; } en = ec ? en / ec : 0.6; } else en = 0.6;
+    let intensity = d.intensity, drive = d.drive;
+    if (type === 'chorus') { intensity = 0.6 + 0.4 * en; drive = 12 + 8 * en; }   // drop plus fort si refrain énergique
+    else if (type === 'verse') { intensity = 0.25 + 0.4 * en; }
     segs.push({
       start: b, end: e, type,
       sub,                 // Hz (réglable)
       subAuto: true,       // suit la détection tant que non modifié
-      intensity: d.intensity,
-      drive: d.drive,
+      intensity,
+      drive,
       duck: d.duck,
       fadeIn: 0,           // mesures de fondu d'entrée
       fadeOut: 0,          // mesures de fondu de sortie
@@ -165,4 +171,17 @@ export function mergeWithNext(st, index) {
   a.end = b.end;
   segs.splice(index + 1, 1);
   compile(st);
+}
+
+/** Copie profonde d'une structure (pour générer des variantes sans toucher l'originale). */
+export function cloneStructure(st) {
+  const c = Object.assign({}, st);
+  c.sectionsAuto = st.sectionsAuto.slice();
+  c.barSubAuto = st.barSubAuto.slice();
+  c.sections = st.sections.slice();
+  c.barSub = Array.from(st.barSub);
+  c.energy = st.energy ? st.energy.slice() : null;
+  c.segments = st.segments.map((s) => Object.assign({}, s));
+  compile(c);
+  return c;
 }

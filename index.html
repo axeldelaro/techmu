@@ -45,6 +45,7 @@
       <button id="btn-save" class="t-btn">SAVE</button>
       <button id="btn-load" class="t-btn">LOAD</button>
       <button id="btn-export" class="t-btn export" title="Bounce hors-ligne rapide — MP3 (Shift+clic = WAV)">⤓ EXPORT RAPIDE</button>
+      <button id="btn-variants" class="t-btn export" title="Génère et télécharge 3 variantes automatiques">⎘ VARIANTES ×3</button>
       <button id="btn-rec" class="t-btn rec" title="Export audio">● REC</button>
       <span id="midi-status" class="midi-status" title="État Web MIDI">MIDI: —</span>
     </div>
@@ -154,6 +155,18 @@
         <p class="arrange-hint">Lance un <b>Auto-Remix</b> pour détecter les sections, puis clique une section pour la régler.</p>
       </div>
       <div id="arrange-editor" class="arrange-editor" hidden></div>
+    </section>
+
+    <!-- ============ TRAITEMENT EN LOT ============ -->
+    <section class="module module-full" id="mod-batch">
+      <h2 class="module-title">12 · TRAITEMENT EN LOT (multi-morceaux)</h2>
+      <div class="row">
+        <input id="batch-input" type="file" accept=".mp3,.wav,.flac,audio/*" multiple hidden />
+        <button id="batch-btn" class="mini-btn">Choisir des morceaux…</button>
+        <label class="chk"><input type="checkbox" id="batch-wav" /> Export WAV (sinon MP3)</label>
+        <span class="readout">Applique tes réglages actuels à chaque morceau et télécharge un remix par fichier.</span>
+      </div>
+      <div id="batch-list" class="batch-list"></div>
     </section>
 
     <!-- ============ SEQUENCER ============ -->

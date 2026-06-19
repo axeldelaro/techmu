@@ -239,6 +239,13 @@ body {
 .ae-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; align-items: center; }
 .ae-chk { display: flex; align-items: center; gap: 5px; color: var(--txt-dim); font-size: .72rem; }
 
+/* ---------- Batch ---------- */
+.batch-list { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
+.batch-row { display: flex; justify-content: space-between; gap: 12px; padding: 6px 10px;
+  background: var(--panel-2); border: 1px solid var(--edge); border-radius: 4px; font-size: .78rem; }
+.batch-name { color: var(--txt); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.batch-stat { color: var(--acid); white-space: nowrap; }
+
 /* ---------- Statusbar ---------- */
 .statusbar {
   display: flex; align-items: center; gap: 10px; padding: 8px 16px;

@@ -14,6 +14,7 @@ import { Recorder } from './Recorder.js';
 import { OfflineRenderer } from './OfflineRenderer.js';
 import { SmartAnalyzer } from './SmartAnalyzer.js';
 import { SectionEditor } from './SectionEditor.js';
+import { BatchProcessor } from './BatchProcessor.js';
 import { UIController } from './UIController.js';
 import { $ } from './utils.js';
 
@@ -61,8 +62,15 @@ async function boot() {
   // 6d) Éditeur d'arrangement par section.
   const sectionEditor = new SectionEditor({ state, scheduler });
 
+  // 6e) Traitement en lot.
+  const batchProcessor = new BatchProcessor({
+    engine, state, smartAnalyzer, offlineRenderer,
+    listEl: document.getElementById('batch-list'),
+    onStatus: (t) => { document.getElementById('status-text').textContent = t; }
+  });
+
   // 7) Contrôleur d'interface : câble tout au DOM.
-  const ui = new UIController({ state, engine, scheduler, visualizer, midi, recorder, smartAnalyzer, offlineRenderer, sectionEditor });
+  const ui = new UIController({ state, engine, scheduler, visualizer, midi, recorder, smartAnalyzer, offlineRenderer, sectionEditor, batchProcessor });
   ui.build();
 
   // Démarre les visualisations.
@@ -73,7 +81,7 @@ async function boot() {
   $('#status-text').textContent = 'Moteur audio initialisé. Importez un sample ou lancez le séquenceur.';
 
   // Expose pour le debug en console.
-  window.UPTEMPO = { state, engine, scheduler, ui, visualizer, midi, recorder, smartAnalyzer, offlineRenderer, sectionEditor };
+  window.UPTEMPO = { state, engine, scheduler, ui, visualizer, midi, recorder, smartAnalyzer, offlineRenderer, sectionEditor, batchProcessor };
 }
 
 bootBtn.addEventListener('click', boot);

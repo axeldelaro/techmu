@@ -290,6 +290,36 @@ function smoothArr(arr, w) {
   return out;
 }
 
+/**
+ * Force des plages d'au moins `minLen` mesures : tout segment plus court est
+ * absorbé par le voisin au plus long run. Répété jusqu'à stabilité.
+ * @param {number[]} arr - classes par mesure (modifié en place)
+ * @param {number} minLen
+ */
+function enforceMinRun(arr, minLen) {
+  let changed = true, guard = 0;
+  while (changed && guard++ < 50) {
+    changed = false;
+    let i = 0;
+    while (i < arr.length) {
+      let j = i; while (j < arr.length && arr[j] === arr[i]) j++;
+      if ((j - i) < minLen) {
+        // Longueur des runs voisins pour choisir la cible d'absorption.
+        let ll = 0; for (let k = i - 1; k >= 0 && arr[k] === arr[i - 1]; k--) ll++;
+        let rl = 0; for (let k = j; k < arr.length && arr[k] === arr[j]; k++) rl++;
+        let target;
+        if (i === 0) target = arr[j];
+        else if (j >= arr.length) target = arr[i - 1];
+        else target = (ll >= rl) ? arr[i - 1] : arr[j];
+        if (target == null) target = arr[i];
+        for (let k = i; k < j; k++) arr[k] = target;
+        changed = true;
+      }
+      i = j;
+    }
+  }
+}
+
 function detectStructure(pcm, sampleRate, bpm, offsetMs, fundamental) {
   // Tempo uptempo cible (multiple du BPM détecté) -> grille des mesures.
   let kbpm = bpm, mul = 1;
@@ -351,17 +381,22 @@ function detectStructure(pcm, sampleRate, bpm, offsetMs, fundamental) {
   const combined = new Float32Array(totalBars);
   for (let b = 0; b < totalBars; b++) combined[b] = 0.55 * (barEB[b] / ebMax) + 0.45 * (rep[b] / repMax);
 
+  // Lissage temporel fort du score combiné (sur ~4 mesures) : évite que de
+  // micro-variations créent des dizaines de faux refrains.
+  const cs = smoothArr(Array.from(combined), 3);
+
   // Seuils par percentiles (sur les mesures).
-  const sortedS = Array.from(combined).sort((a, b) => a - b);
+  const sortedS = Array.from(cs).sort((a, b) => a - b);
   const pct = (p) => sortedS[Math.min(sortedS.length - 1, Math.max(0, Math.floor(p * sortedS.length)))];
-  const HI = pct(0.62), LO = pct(0.42);
+  const HI = pct(0.66), LO = pct(0.40);
   const barClass = new Array(totalBars);
-  for (let b = 0; b < totalBars; b++) barClass[b] = combined[b] > HI ? 2 : combined[b] < LO ? 0 : 1;
-  // Lissage : absorbe les mesures isolées.
-  for (let pass = 0; pass < 3; pass++)
-    for (let b = 1; b < totalBars - 1; b++)
-      if (barClass[b] !== barClass[b - 1] && barClass[b] !== barClass[b + 1] && barClass[b - 1] === barClass[b + 1])
-        barClass[b] = barClass[b - 1];
+  for (let b = 0; b < totalBars; b++) barClass[b] = cs[b] > HI ? 2 : cs[b] < LO ? 0 : 1;
+
+  // IMPÉRATIF : sections d'au moins ~8 s. On absorbe tout segment trop court
+  // dans le voisin le plus long -> on passe de ~70 micro-blocs à une poignée
+  // de sections cohérentes (vrais couplets/refrains).
+  const minRun = Math.max(6, Math.round(8 / barLen));
+  enforceMinRun(barClass, minRun);
 
   // Étiquettes.
   const sections = barClass.map(c => c === 2 ? 'chorus' : c === 0 ? 'verse' : 'trans');
@@ -393,7 +428,13 @@ function detectStructure(pcm, sampleRate, bpm, offsetMs, fundamental) {
     b = e;
   }
 
-  return { kbpm: Math.round(kbpm), beat, barLen, downbeat, totalBars, sections, barSub: Array.from(barSub) };
+  // Énergie normalisée par mesure (0..1) -> sert à adapter l'intensité des
+  // drops et de la basse à ce que fait réellement le morceau.
+  let csMax = 1e-9; for (let i = 0; i < totalBars; i++) if (cs[i] > csMax) csMax = cs[i];
+  const energy = new Array(totalBars);
+  for (let i = 0; i < totalBars; i++) energy[i] = cs[i] / csMax;
+
+  return { kbpm: Math.round(kbpm), beat, barLen, downbeat, totalBars, sections, barSub: Array.from(barSub), energy };
 }
 
 /** Pitch d'une plage par autocorrélation sur le signal passe-bas. */
@@ -488,7 +529,15 @@ export class SmartAnalyzer {
   analyze() {
     const buf = this.engine.sampleBuffer;
     if (!buf) return Promise.reject(new Error('Aucun sample chargé.'));
+    return this.analyzeBuffer(buf);
+  }
 
+  /**
+   * Analyse DSP d'un AudioBuffer arbitraire (utilisé par le lot).
+   * @param {AudioBuffer} buf
+   * @returns {Promise<object>}
+   */
+  analyzeBuffer(buf) {
     // Downmix mono (moyenne des canaux) pour l'analyse.
     const ch0 = buf.getChannelData(0);
     const mono = new Float32Array(ch0.length);
