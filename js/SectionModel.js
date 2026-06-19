@@ -63,6 +63,9 @@ export function buildSegments(st) {
       duck: d.duck,
       fadeIn: 0,           // mesures de fondu d'entrée
       fadeOut: 0,          // mesures de fondu de sortie
+      bassOn: (type === 'chorus' || type === 'build' || type === 'trans'),
+      bassOct: 0,          // décalage d'octave de la basse pour la section
+      kickStyle: 'auto',   // auto | straight | rolling | triplet | climax
       seed: (Math.random() * 1e9) | 0
     });
     b = e;
@@ -84,6 +87,9 @@ export function compile(st) {
   st.duck = new Float32Array(n);
   st.fade = new Float32Array(n).fill(1);
   st.seed = new Int32Array(n);
+  st.bassOn = new Uint8Array(n);
+  st.bassOct = new Int8Array(n);
+  st.kickStyle = new Array(n).fill('auto');
 
   for (const seg of st.segments) {
     const L = seg.end - seg.start;
@@ -95,6 +101,9 @@ export function compile(st) {
       st.drive[i] = seg.drive;
       st.duck[i] = seg.duck;
       st.seed[i] = seg.seed;
+      st.bassOn[i] = seg.bassOn ? 1 : 0;
+      st.bassOct[i] = seg.bassOct | 0;
+      st.kickStyle[i] = seg.kickStyle || 'auto';
       // Fondus d'entrée/sortie -> gain 0..1 appliqué aux kicks/perc/ducking.
       let g = 1;
       if (seg.fadeIn > 0 && idx < seg.fadeIn) g = Math.min(g, (idx + 1) / (seg.fadeIn + 1));
@@ -127,5 +136,33 @@ export function resizeSegment(st, index, edge, delta) {
   }
   // Recouds les trous éventuels.
   for (let i = 0; i < segs.length - 1; i++) segs[i + 1].start = segs[i].end;
+  compile(st);
+}
+
+/** Revient à la détection automatique (annule toutes les éditions). */
+export function resetAuto(st) {
+  st.sections = st.sectionsAuto.slice();
+  st.barSub = st.barSubAuto.slice();
+  buildSegments(st);
+}
+
+/** Supprime un segment : ses mesures sont absorbées par le voisin. */
+export function deleteSegment(st, index) {
+  const segs = st.segments;
+  if (segs.length <= 1) return;
+  const seg = segs[index];
+  if (index > 0) segs[index - 1].end = seg.end;
+  else segs[index + 1].start = seg.start;
+  segs.splice(index, 1);
+  compile(st);
+}
+
+/** Fusionne le segment avec le suivant (garde le type du premier). */
+export function mergeWithNext(st, index) {
+  const segs = st.segments;
+  const a = segs[index], b = segs[index + 1];
+  if (!b) return;
+  a.end = b.end;
+  segs.splice(index + 1, 1);
   compile(st);
 }

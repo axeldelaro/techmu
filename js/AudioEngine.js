@@ -11,6 +11,7 @@
    ===================================================================== */
 
 import { HardcoreKick } from './instruments/HardcoreKick.js';
+import { SubBass } from './instruments/SubBass.js';
 import { clamp, mapRange } from './utils.js';
 
 export class AudioEngine {
@@ -67,11 +68,17 @@ export class AudioEngine {
     this.limiter.release.value = 0.05;   // 50 ms
 
     // Câblage : busInput -> djFilter -> gater -> analyser -> master -> limiter -> dest
+    // EQ master 2 bandes (low-shelf + high-shelf) avant le limiter.
+    this.eqLow = ctx.createBiquadFilter(); this.eqLow.type = 'lowshelf'; this.eqLow.frequency.value = 180;
+    this.eqHigh = ctx.createBiquadFilter(); this.eqHigh.type = 'highshelf'; this.eqHigh.frequency.value = 4000;
+
     this.busInput.connect(this.djFilter);
     this.djFilter.connect(this.gaterGain);
     this.gaterGain.connect(this.analyser);
     this.analyser.connect(this.masterGain);
-    this.masterGain.connect(this.limiter);
+    this.masterGain.connect(this.eqLow);
+    this.eqLow.connect(this.eqHigh);
+    this.eqHigh.connect(this.limiter);
     this.limiter.connect(ctx.destination);
 
     // Prise d'enregistrement (tap) APRÈS le limiter pour capturer la sortie finale.
@@ -97,8 +104,9 @@ export class AudioEngine {
     this.sampleDuck.connect(this.scComp);
     this.scComp.connect(this.sampleGain).connect(this.busInput);
 
-    // ---------- Instruments (HardTechno/Uptempo : gros kicks uniquement) ----------
+    // ---------- Instruments ----------
     this.kick = new HardcoreKick(ctx, this.busInput, this.state);
+    this.subBass = new SubBass(ctx, this.busInput, this.state);
 
     this._applyState();
     this.state.on('fx', () => this._applyState());
@@ -114,6 +122,8 @@ export class AudioEngine {
     const t = this.ctx.currentTime;
     this.masterGain.gain.setTargetAtTime(fx.masterLevel, t, 0.02);
     this.sampleGain.gain.setTargetAtTime(s.level, t, 0.02);
+    if (this.eqLow) this.eqLow.gain.setTargetAtTime(fx.eqLow || 0, t, 0.02);
+    if (this.eqHigh) this.eqHigh.gain.setTargetAtTime(fx.eqHigh || 0, t, 0.02);
     this._applyDjFilter(fx.djFilterOn ? fx.djFilter : 0.5);
     if (this.sampleSource) {
       this.sampleSource.playbackRate.setTargetAtTime(s.playbackRate, t, 0.02);

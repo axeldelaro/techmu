@@ -22,6 +22,7 @@ export class UIController {
   build() {
     this._buildMasterKnobs();
     this._buildKickKnobs();
+    this._buildBassKnobs();
     this._buildFxKnobs();
     this._buildSequencer();
     this._bindTransport();
@@ -79,6 +80,15 @@ export class UIController {
     this._addKnob(c, { label: 'Level', path: 'kick.level', min: 0, max: 1, value: 0.9 });
   }
 
+  _buildBassKnobs() {
+    const c = $('#knobs-bass');
+    this._addKnob(c, { label: 'Level', path: 'bass.level', min: 0, max: 1, value: 0.5 });
+    this._addKnob(c, { label: 'Decay', path: 'bass.decay', min: 0.04, max: 0.6, value: 0.16, unit: 's' });
+    this._addKnob(c, { label: 'Octave', path: 'bass.octave', min: -2, max: 1, value: 0 });
+    this._addKnob(c, { label: 'Glide', path: 'bass.glide', min: 0, max: 0.2, value: 0, unit: 's' });
+    this._addKnob(c, { label: 'Drive', path: 'bass.drive', min: 0, max: 1, value: 0.3 });
+  }
+
   _buildFxKnobs() {
     const c = $('#knobs-fx');
     const v = 'fx';
@@ -86,6 +96,8 @@ export class UIController {
     this._addKnob(c, { variant: v, label: 'SC Amount', path: 'fx.sidechainAmount', min: 0, max: 1, value: 0.8 });
     this._addKnob(c, { variant: v, label: 'SC Release', path: 'fx.sidechainRelease', min: 0.03, max: 0.5, value: 0.18, unit: 's' });
     this._addKnob(c, { variant: v, label: 'Stutter', path: 'fx.stutterRate', min: 20, max: 200, value: 60, unit: 'ms' });
+    this._addKnob(c, { variant: v, label: 'EQ Low', path: 'fx.eqLow', min: -12, max: 12, value: 0, unit: 'dB' });
+    this._addKnob(c, { variant: v, label: 'EQ High', path: 'fx.eqHigh', min: -12, max: 12, value: 0, unit: 'dB' });
     this._addKnob(c, { variant: v, label: 'Master', path: 'fx.masterLevel', min: 0, max: 1, value: 0.85 });
   }
 
@@ -149,10 +161,28 @@ export class UIController {
 
   _bindSelectsAndChecks() {
     $('#kick-curve').addEventListener('change', (e) => this.state.set('kick.curve', e.target.value));
+    $('#kick-tonal').addEventListener('change', (e) => this.state.set('kick.tonal', e.target.checked));
+    $('#kick-scale').addEventListener('change', (e) => this.state.set('kick.scale', e.target.value));
+    $('#kick-preset').addEventListener('change', (e) => { this._applyKickPreset(e.target.value); e.target.value = ''; });
+    $('#bass-on').addEventListener('change', (e) => this.state.set('bass.on', e.target.checked));
+    $('#bass-mode').addEventListener('change', (e) => this.state.set('bass.mode', e.target.value));
     $('#sidechain-on').addEventListener('change', (e) => this.state.set('fx.sidechainOn', e.target.checked));
     $('#djfilter-on').addEventListener('change', (e) => this.state.set('fx.djFilterOn', e.target.checked));
     $('#track-loop').addEventListener('change', (e) => this.state.set('sample.loop', e.target.checked));
     $('#kick-audition').addEventListener('click', () => this.engine.kick.trigger(this.engine.ctx.currentTime + 0.02));
+  }
+
+  /** Applique un preset de caractère de kick (règle plusieurs paramètres). */
+  _applyKickPreset(name) {
+    const P = {
+      uptempo:    { curve: 'hardclip', drive: 0.85, decay: 0.55, clickAmount: 0.6, noise: 0.12, eqFreq: 1200, eqGain: 8 },
+      rawstyle:   { curve: 'foldback', drive: 0.92, decay: 0.70, clickAmount: 0.5, noise: 0.08, eqFreq: 900,  eqGain: 10 },
+      frenchcore: { curve: 'hardclip', drive: 0.95, decay: 0.35, clickAmount: 0.8, noise: 0.20, eqFreq: 1500, eqGain: 6 },
+      hardcore:   { curve: 'hardclip', drive: 0.80, decay: 0.40, clickAmount: 0.7, noise: 0.25, eqFreq: 1300, eqGain: 7 }
+    }[name];
+    if (!P) return;
+    for (const k in P) this.state.set('kick.' + k, P[k]);
+    $('#status-text').textContent = `Preset kick « ${name} » appliqué.`;
   }
 
   /* ---------------- Transport ---------------- */
@@ -399,6 +429,10 @@ export class UIController {
     $('#swing-input').value = this.state.get('transport.swing');
     $('#swing-val').textContent = Math.round(this.state.get('transport.swing') * 200) + '%';
     $('#kick-curve').value = this.state.get('kick.curve');
+    $('#kick-tonal').checked = this.state.get('kick.tonal');
+    $('#kick-scale').value = this.state.get('kick.scale');
+    $('#bass-on').checked = this.state.get('bass.on');
+    $('#bass-mode').value = this.state.get('bass.mode');
     $('#sidechain-on').checked = this.state.get('fx.sidechainOn');
     $('#djfilter-on').checked = this.state.get('fx.djFilterOn');
     $('#track-loop').checked = this.state.get('sample.loop');

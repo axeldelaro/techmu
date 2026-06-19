@@ -27,6 +27,7 @@ export class Arrangement {
    */
   constructor(engine, structure) {
     this.engine = engine;
+    this.state = engine.state || null;   // pour kick tonal/gamme + mode de basse
     this.s = structure;
     this.sections = structure.sections || [];
     this.barSub = structure.barSub || [];
@@ -39,8 +40,13 @@ export class Arrangement {
     this.intenDef = { chorus: 1, build: 0.6, verse: 0.45, trans: 0.5, intro: 0.12, outro: 0.12 };
     this.rebuild();
 
-    // Gamme mineure pentatonique pour le kick "tonal" (degrés en demi-tons).
-    this.scale = [0, 3, 5, 7, 10, 12];
+    // Gammes disponibles pour le kick "tonal" / la basse (degrés en demi-tons).
+    this.scales = {
+      minorPent: [0, 3, 5, 7, 10, 12],
+      minor: [0, 2, 3, 5, 7, 8, 10, 12],
+      phrygian: [0, 1, 3, 5, 7, 8, 10, 12],
+      major: [0, 2, 4, 5, 7, 9, 11, 12]
+    };
     // Riffs mélodiques (degrés de gamme par temps) selon le style de refrain.
     this.melodies = [
       [0, 0, 0, 0],   // style 0 : kick fixe (classique)
@@ -77,8 +83,11 @@ export class Arrangement {
 
   /** Hauteur (Hz) du kick "tonal" pour un temps donné d'un refrain. */
   _kickFreq(f, style, phraseBeat) {
+    const k = this.state ? this.state.get('kick') : null;
+    if (k && k.tonal === false) return f;        // kick tonal désactivé -> hauteur fixe
+    const scale = (k && this.scales[k.scale]) || this.scales.minorPent;
     const mel = this.melodies[Math.min(style, this.melodies.length - 1)];
-    const deg = this.scale[mel[phraseBeat % mel.length] % this.scale.length] || 0;
+    const deg = scale[mel[phraseBeat % mel.length] % scale.length] || 0;
     let hz = f * Math.pow(2, deg / 12);
     while (hz > 130) hz /= 2;   // garde le kick dans le grave
     return hz;
@@ -115,9 +124,28 @@ export class Arrangement {
     let _r = (seed ^ (stepGlobal * 2654435761)) >>> 0;
     const Rnd = () => ((_r = (_r * 1664525 + 1013904223) >>> 0) / 4294967296);
 
+    // ---- LAYER DE BASSE (sub) — accordé à la section, réglable/éditable ----
+    if (eng.subBass) {
+      const defOn = (type === 'chorus' || type === 'build' || type === 'trans');
+      const bassOn = (this.s.bassOn && this.s.bassOn[bar] != null) ? !!this.s.bassOn[bar] : defOn;
+      if (bassOn && fade > 0.04) {
+        const boct = (this.s.bassOct && this.s.bassOct[bar] != null) ? this.s.bassOct[bar] : 0;
+        const bf = f * Math.pow(2, boct);
+        const mode = (this.state ? this.state.get('bass').mode : 'offbeat');
+        if (mode === 'sustain') { if (q === 0 && six === 0) eng.subBass.trigger(time, bf, this.barLen * 0.95, V(0.8)); }
+        else if (mode === 'root') { if (six === 0) eng.subBass.trigger(time, bf, this.beat * 0.6, V(0.9)); }
+        else { if (six === 2) eng.subBass.trigger(time, bf, this.beat * 0.45, V(0.9)); } // offbeat
+      }
+    }
+
     switch (type) {
       case 'chorus': {
-        const style = Math.min(this.chorusNum[bar], 3);
+        let style = Math.min(this.chorusNum[bar], 3);
+        const ks = this.s.kickStyle && this.s.kickStyle[bar];
+        if (ks && ks !== 'auto') {
+          const map = { straight: 0, rolling: 1, triplet: 2, climax: 3 };
+          if (map[ks] != null) style = map[ks];
+        }
         const phraseBeat = (pp * 4 + q) % 4;
         const fk = this._kickFreq(f, style, phraseBeat);
         const gapBar = (pp % 8 === 7);

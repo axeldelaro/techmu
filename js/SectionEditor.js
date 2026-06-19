@@ -9,7 +9,7 @@
    ===================================================================== */
 
 import { $, el } from './utils.js';
-import { compile, resizeSegment, defaultsFor, typeLabel, hzToNote } from './SectionModel.js';
+import { compile, resizeSegment, defaultsFor, typeLabel, hzToNote, resetAuto, deleteSegment, mergeWithNext } from './SectionModel.js';
 
 export class SectionEditor {
   /**
@@ -146,8 +146,31 @@ export class SectionEditor {
     grid.appendChild(slider('Fondu entrée', 0, 6, 1, seg.fadeIn, ' mes', (v) => { seg.fadeIn = v; this._apply(); }));
     grid.appendChild(slider('Fondu sortie', 0, 6, 1, seg.fadeOut, ' mes', (v) => { seg.fadeOut = v; this._apply(); }));
 
+    // Style de kick de la section (override).
+    const ksCtrl = el('label', 'ae-ctrl'); ksCtrl.appendChild(el('span', null, 'Style de kick'));
+    const ks = el('select');
+    [['auto', 'Auto (évolutif)'], ['straight', 'Straight 4/4'], ['rolling', 'Rolling'], ['triplet', 'Triplets/ghosts'], ['climax', 'Climax (double)']]
+      .forEach(([v, t]) => { const o = el('option', null, t); o.value = v; if ((seg.kickStyle || 'auto') === v) o.selected = true; ks.appendChild(o); });
+    ks.addEventListener('change', () => { seg.kickStyle = ks.value; this._applyLight(); });
+    ksCtrl.appendChild(ks); grid.appendChild(ksCtrl);
+
+    // Octave de basse de la section.
+    const boCtrl = el('label', 'ae-ctrl'); boCtrl.appendChild(el('span', null, 'Octave basse'));
+    const bo = el('select');
+    [-2, -1, 0, 1].forEach((v) => { const o = el('option', null, (v >= 0 ? '+' : '') + v); o.value = v; if ((seg.bassOct | 0) === v) o.selected = true; bo.appendChild(o); });
+    bo.addEventListener('change', () => { seg.bassOct = parseInt(bo.value, 10); this._applyLight(); });
+    boCtrl.appendChild(bo); grid.appendChild(boCtrl);
+
     this.panel.appendChild(grid);
-    this.panel.appendChild(autoWrap);
+
+    const flags = el('div', 'ae-row');
+    flags.appendChild(autoWrap);
+    const bassWrap = el('label', 'ae-chk');
+    const bassChk = el('input'); bassChk.type = 'checkbox'; bassChk.checked = seg.bassOn;
+    bassChk.addEventListener('change', () => { seg.bassOn = bassChk.checked; this._applyLight(); });
+    bassWrap.append(bassChk, document.createTextNode('Basse sur cette section'));
+    flags.appendChild(bassWrap);
+    this.panel.appendChild(flags);
 
     // Étendre / réduire / scinder / régénérer.
     const row = el('div', 'ae-row');
@@ -160,7 +183,10 @@ export class SectionEditor {
       btn('début ▶', () => { resizeSegment(this.st, this.selected, 'start', +1); this._postResize(); }),
       btn('◀ fin', () => { resizeSegment(this.st, this.selected, 'end', -1); this._postResize(); }),
       btn('fin ▶', () => { resizeSegment(this.st, this.selected, 'end', +1); this._postResize(); }),
-      btn('⟳ régénérer', () => { seg.seed = (Math.random() * 1e9) | 0; this._apply(); })
+      btn('⟳ régénérer', () => { seg.seed = (Math.random() * 1e9) | 0; this._apply(); }),
+      btn('⛓ fusionner →', () => { mergeWithNext(this.st, this.selected); this._postResize(); }),
+      btn('🗑 supprimer', () => { deleteSegment(this.st, this.selected); this.selected = Math.max(0, this.selected - 1); this._postResize(); }),
+      btn('↺ tout en Auto', () => { resetAuto(this.st); this.selected = -1; const a = this._arr(); if (a) a.rebuild(); this.renderTimeline(); this.panel.hidden = true; })
     );
     this.panel.appendChild(row);
   }

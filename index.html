@@ -83,7 +83,43 @@
             <option value="softsat">Soft Saturation</option>
           </select>
         </label>
+        <label class="sel">Preset
+          <select id="kick-preset">
+            <option value="">—</option>
+            <option value="uptempo">Uptempo</option>
+            <option value="rawstyle">Rawstyle</option>
+            <option value="frenchcore">Frenchcore</option>
+            <option value="hardcore">Hardcore</option>
+          </select>
+        </label>
         <button id="kick-audition" class="mini-btn">Test Kick</button>
+      </div>
+      <div class="row">
+        <label class="chk"><input type="checkbox" id="kick-tonal" checked /> Kick tonal</label>
+        <label class="sel">Gamme
+          <select id="kick-scale">
+            <option value="minorPent">Mineure penta</option>
+            <option value="minor">Mineure</option>
+            <option value="phrygian">Phrygien</option>
+            <option value="major">Majeure</option>
+          </select>
+        </label>
+      </div>
+    </section>
+
+    <!-- ============ BASSE (SUB) ============ -->
+    <section class="module" id="mod-bass">
+      <h2 class="module-title">3 · BASSE (SUB)</h2>
+      <div class="knob-row" id="knobs-bass"></div>
+      <div class="row">
+        <label class="chk"><input type="checkbox" id="bass-on" checked /> Basse active</label>
+        <label class="sel">Mode
+          <select id="bass-mode">
+            <option value="offbeat">Offbeat (roulante)</option>
+            <option value="root">Sur chaque temps</option>
+            <option value="sustain">Tenue</option>
+          </select>
+        </label>
       </div>
     </section>
 

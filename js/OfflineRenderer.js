@@ -12,6 +12,7 @@
    ===================================================================== */
 
 import { HardcoreKick } from './instruments/HardcoreKick.js';
+import { SubBass } from './instruments/SubBass.js';
 import { Arrangement } from './Arrangement.js';
 import { clamp } from './utils.js';
 
@@ -83,7 +84,7 @@ export class OfflineRenderer {
 
     // ---- Rendu (plus rapide que le temps réel) ----
     const rendered = await octx.startRendering();
-    facade.kick.dispose();                            // évite la fuite d'abonnement
+    facade.kick.dispose(); facade.subBass.dispose();  // évite les fuites d'abonnement
 
     onProgress?.(60);
 
@@ -116,13 +117,17 @@ export class OfflineRenderer {
     const gaterGain = octx.createGain();
     const masterGain = octx.createGain(); masterGain.gain.value = fx.masterLevel;
 
+    // EQ master 2 bandes (mêmes réglages qu'en live).
+    const eqLow = octx.createBiquadFilter(); eqLow.type = 'lowshelf'; eqLow.frequency.value = 180; eqLow.gain.value = fx.eqLow || 0;
+    const eqHigh = octx.createBiquadFilter(); eqHigh.type = 'highshelf'; eqHigh.frequency.value = 4000; eqHigh.gain.value = fx.eqHigh || 0;
+
     // Limiter de mastering (mêmes réglages qu'en live).
     const limiter = octx.createDynamicsCompressor();
     limiter.threshold.value = -1.0; limiter.knee.value = 0; limiter.ratio.value = 20;
     limiter.attack.value = 0.001; limiter.release.value = 0.05;
 
     busInput.connect(djFilter); djFilter.connect(gaterGain); gaterGain.connect(masterGain);
-    masterGain.connect(limiter); limiter.connect(octx.destination);
+    masterGain.connect(eqLow); eqLow.connect(eqHigh); eqHigh.connect(limiter); limiter.connect(octx.destination);
 
     // Chaîne sample : duck -> compresseur glue -> gain -> bus.
     const sampleDuck = octx.createGain();
@@ -132,13 +137,14 @@ export class OfflineRenderer {
     const sampleGain = octx.createGain(); sampleGain.gain.value = state.get('sample.level');
     sampleDuck.connect(scComp); scComp.connect(sampleGain); sampleGain.connect(busInput);
 
-    // Instrument kick (lit l'état -> tes réglages de knobs s'appliquent).
+    // Instruments (lisent l'état -> tes réglages s'appliquent).
     const kick = new HardcoreKick(octx, busInput, state);
+    const subBass = new SubBass(octx, busInput, state);
 
     // Façade exposant l'API attendue par l'Arrangement / le pattern.
     const buffer = this.engine.sampleBuffer;
     const facade = {
-      ctx: octx, busInput, sampleDuck, gaterGain, kick, sampleBuffer: buffer,
+      ctx: octx, busInput, sampleDuck, gaterGain, kick, subBass, sampleBuffer: buffer, state,
       playSlice: (time, offset, dur, rate = 1, amp = 0.7) => {
         if (!buffer) return;
         const off = clamp(offset, 0, Math.max(0, buffer.duration - dur));

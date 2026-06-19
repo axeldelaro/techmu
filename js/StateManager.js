@@ -32,7 +32,20 @@ function defaultState() {
       curve: 'hardclip', // hardclip | foldback | softsat
       eqFreq: 1200,      // Hz EQ post-distorsion (mediums baveux)
       eqGain: 6,         // dB
-      level: 0.9
+      level: 0.9,
+      tonal: true,       // kick "tonal" (la hauteur suit un riff dans le refrain)
+      scale: 'minorPent' // gamme du riff tonal
+    },
+
+    // Layer de BASSE dédié (sub) — joué par l'arrangement, accordé par section.
+    bass: {
+      on: true,
+      level: 0.5,
+      decay: 0.16,       // s
+      octave: 0,         // décalage d'octave global
+      glide: 0.0,        // s portamento entre notes
+      drive: 0.3,        // saturation douce
+      mode: 'offbeat'    // offbeat | sustain | root
     },
 
     acid: {
@@ -54,7 +67,9 @@ function defaultState() {
       sidechainAmount: 0.8, // profondeur du ducking (0..1)
       sidechainRelease: 0.18,
       stutterRate: 60,   // ms taille de la tranche stutter (build-up)
-      masterLevel: 0.85
+      masterLevel: 0.85,
+      eqLow: 0,          // dB low-shelf master
+      eqHigh: 0          // dB high-shelf master
     },
 
     sample: {
