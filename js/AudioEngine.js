@@ -82,9 +82,21 @@ export class AudioEngine {
     // ---------- Bus du sample importé (avec ducking sidechain dédié) ----------
     // Le sample passe par un GainNode "duck" automatisé par le sidechain,
     // séparé du bus instruments pour que SEUL l'original "pompe".
+    // Chaîne : sampleDuck -> scComp (glue/sidechain) -> sampleGain -> busInput
     this.sampleDuck = ctx.createGain(); // gain de ducking (1 = ouvert)
     this.sampleGain = ctx.createGain(); // volume du sample
-    this.sampleDuck.connect(this.sampleGain).connect(this.busInput);
+
+    // Compresseur sidechain dédié à la piste d'origine. Réglages "glue"
+    // par défaut ; reconfiguré agressivement par l'Auto-Remix v11.
+    this.scComp = ctx.createDynamicsCompressor();
+    this.scComp.threshold.value = -24;
+    this.scComp.knee.value = 6;
+    this.scComp.ratio.value = 4;
+    this.scComp.attack.value = 0.01;
+    this.scComp.release.value = 0.18;
+
+    this.sampleDuck.connect(this.scComp);
+    this.scComp.connect(this.sampleGain).connect(this.busInput);
 
     // ---------- Instruments ----------
     this.kick = new HardcoreKick(ctx, this.busInput, this.state);
@@ -192,7 +204,17 @@ export class AudioEngine {
   }
 
   /** Démarre la lecture du sample importé. */
-  playSample() {
+  playSample() { this.playSampleAt(this.ctx.currentTime + 0.02, 0); }
+
+  /**
+   * Démarre la lecture du sample à une heure absolue précise, depuis un
+   * offset interne (s). Utilisé par l'Auto-Remix v11 pour l'alignement de
+   * phase : on lance la musique de telle sorte que son premier downbeat
+   * tombe pile sur le pas 0 du séquenceur.
+   * @param {number} when   - heure absolue AudioContext (s)
+   * @param {number} offset - position de départ dans le buffer (s)
+   */
+  playSampleAt(when, offset = 0) {
     if (!this.sampleBuffer) return;
     this.stopSample();
     const s = this.state.get('sample');
@@ -202,7 +224,7 @@ export class AudioEngine {
     src.playbackRate.value = s.playbackRate;
     src.detune.value = s.detune;
     src.connect(this.sampleDuck);
-    src.start();
+    src.start(when, Math.max(0, offset));
     this.sampleSource = src;
   }
 
@@ -288,6 +310,27 @@ export class AudioEngine {
       clearInterval(this._stutterTimer);
       this._stutterTimer = null;
     }
+  }
+
+  /* =================================================================
+     v11 — Configuration sidechain agressive (Auto-Remix).
+     Règle le DynamicsCompressorNode de la piste d'origine en mode
+     "pumping" extrême. Le déclenchement (gain reduction) est calé sur
+     le Kick généré via l'enveloppe duck() programmée par le Scheduler —
+     la Web Audio API n'exposant pas d'entrée sidechain externe, cette
+     enveloppe fantôme synchronisée au kick EST le signal de déclenchement.
+     ================================================================= */
+  configureAutoSidechain() {
+    const t = this.ctx.currentTime;
+    this.scComp.threshold.setValueAtTime(-30, t); // seuil agressif
+    this.scComp.ratio.setValueAtTime(20, t);      // 20:1
+    this.scComp.attack.setValueAtTime(0.003, t);  // 3 ms
+    this.scComp.release.setValueAtTime(0.20, t);
+    this.scComp.knee.setValueAtTime(2, t);
+    // Active le ducking et accentue sa profondeur/relâche pour la pompe.
+    this.state.set('fx.sidechainOn', true);
+    this.state.set('fx.sidechainAmount', 0.85);
+    this.state.set('fx.sidechainRelease', 0.20);
   }
 
   /** Données temporelles (oscilloscope). */

@@ -77,6 +77,19 @@ body {
 .t-btn.rec { color: var(--accent); }
 .t-btn.rec.active { background: var(--accent); color:#fff; animation: pulse 1s infinite; }
 .t-btn.build.active { background: var(--accent-2); color:#000; }
+.t-btn.autoremix {
+  background: linear-gradient(135deg, var(--acid), #2ecc71); color:#062; border-color:#1a3;
+  font-weight: 800; box-shadow: 0 0 14px rgba(124,252,0,.35);
+}
+.t-btn.autoremix:hover { filter: brightness(1.12); }
+.t-btn.autoremix.busy { animation: pulse .8s infinite; filter: saturate(.6); }
+
+/* Lecture des résultats d'analyse IA (v11) */
+.analysis-readout {
+  margin-top: 10px; padding: 8px 10px; border: 1px solid var(--edge);
+  border-radius: 4px; background: #0d0f12; color: var(--acid);
+  font-size: .72rem; letter-spacing: .5px; font-family: monospace;
+}
 @keyframes pulse { 50% { filter: brightness(1.4); } }
 
 .bpm-wrap, .swing-wrap { display: flex; align-items: center; gap: 6px; }

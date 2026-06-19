@@ -32,6 +32,7 @@ export class UIController {
     this._bindSaveLoad();
     this._bindRecord();
     this._bindBuildup();
+    this._bindAutoRemix();
     this._bindKeyboard();
 
     // Playhead du séquenceur (mise à jour depuis l'horloge audio).
@@ -330,6 +331,46 @@ export class UIController {
     btn.addEventListener('mousedown', start);
     btn.addEventListener('touchstart', (e) => { e.preventDefault(); start(); }, { passive: false });
     ['mouseup', 'mouseleave', 'touchend'].forEach((ev) => btn.addEventListener(ev, end));
+  }
+
+  /* ---------------- 1-Click Auto-Remix (v11) ---------------- */
+
+  _bindAutoRemix() {
+    const btn = $('#btn-autoremix');
+    btn.addEventListener('click', async () => {
+      if (!this.engine.sampleBuffer) {
+        $('#status-text').textContent = 'Importez d\'abord un sample à remixer.';
+        return;
+      }
+      btn.classList.add('busy');
+      btn.textContent = '⏳ ANALYSE…';
+      $('#analysis-readout').textContent = 'IA: analyse DSP en cours (Web Worker)…';
+      $('#status-text').textContent = 'Auto-Remix : détection BPM / phase / harmonie…';
+      try {
+        const a = await this.smartAnalyzer.analyzeAndRemix({ autoplay: true });
+        const noteName = this._hzToNote(a.fundamental);
+        $('#analysis-readout').textContent =
+          `IA ▸ BPM ${a.bpm} · downbeat ${Math.round(a.offsetMs)}ms · ` +
+          `fond. ${a.fundamental.toFixed(1)}Hz (${noteName}) · ratio ×${this.state.get('sample.playbackRate')}`;
+        $('#status-text').textContent = 'Auto-Remix appliqué et calé. ▶ Lecture synchronisée.';
+        // L'analyseur a déjà démarré la lecture synchronisée : reflète le transport.
+        $('#btn-play').classList.add('active');
+        $('#btn-play').textContent = '❚❚';
+      } catch (e) {
+        $('#analysis-readout').textContent = 'IA: échec — ' + e.message;
+        $('#status-text').textContent = 'Auto-Remix : erreur d\'analyse.';
+      } finally {
+        btn.classList.remove('busy');
+        btn.textContent = '⚡ 1-CLICK AUTO-REMIX';
+      }
+    });
+  }
+
+  /** Convertit une fréquence (Hz) en nom de note pour l'affichage. */
+  _hzToNote(hz) {
+    if (!hz || hz <= 0) return '—';
+    const midi = Math.round(69 + 12 * Math.log2(hz / 440));
+    return NOTE_NAMES[((midi % 12) + 12) % 12] + (Math.floor(midi / 12) - 1);
   }
 
   /* ---------------- Clavier ---------------- */

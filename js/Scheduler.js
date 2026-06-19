@@ -132,15 +132,21 @@ export class Scheduler {
     }
   }
 
-  /** Démarre la lecture. */
-  start() {
-    if (this.isRunning) return;
+  /**
+   * Démarre la lecture.
+   * @param {number} [startTime] - heure absolue (s) du pas 0. Permet à
+   *   l'Auto-Remix v11 d'aligner le pas 0 du kick sur le downbeat du sample.
+   * @returns {number} l'heure absolue programmée du pas 0.
+   */
+  start(startTime) {
+    if (this.isRunning) return this.nextNoteTime;
     this.isRunning = true;
     this.current16th = 0;
     // Petite marge pour ne pas programmer dans le passé.
-    this.nextNoteTime = this.engine.ctx.currentTime + 0.05;
+    this.nextNoteTime = startTime != null ? startTime : this.engine.ctx.currentTime + 0.05;
     this.worker.postMessage('start');
     this.state.set('transport.playing', true);
+    return this.nextNoteTime;
   }
 
   /** Arrête la lecture. */

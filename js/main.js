@@ -11,6 +11,7 @@ import { Scheduler } from './Scheduler.js';
 import { Visualizer } from './Visualizer.js';
 import { MidiController } from './MidiController.js';
 import { Recorder } from './Recorder.js';
+import { SmartAnalyzer } from './SmartAnalyzer.js';
 import { UIController } from './UIController.js';
 import { $ } from './utils.js';
 
@@ -49,8 +50,11 @@ async function boot() {
   // 6) Enregistreur / export.
   const recorder = new Recorder(engine);
 
+  // 6b) Cerveau Auto-Remix (v11) — analyse DSP locale via Web Worker.
+  const smartAnalyzer = new SmartAnalyzer(engine, state, scheduler);
+
   // 7) Contrôleur d'interface : câble tout au DOM.
-  const ui = new UIController({ state, engine, scheduler, visualizer, midi, recorder });
+  const ui = new UIController({ state, engine, scheduler, visualizer, midi, recorder, smartAnalyzer });
   ui.build();
 
   // Démarre les visualisations.
@@ -61,7 +65,7 @@ async function boot() {
   $('#status-text').textContent = 'Moteur audio initialisé. Importez un sample ou lancez le séquenceur.';
 
   // Expose pour le debug en console.
-  window.UPTEMPO = { state, engine, scheduler, ui, visualizer, midi, recorder };
+  window.UPTEMPO = { state, engine, scheduler, ui, visualizer, midi, recorder, smartAnalyzer };
 }
 
 bootBtn.addEventListener('click', boot);
