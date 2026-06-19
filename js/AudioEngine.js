@@ -306,6 +306,25 @@ export class AudioEngine {
     const ng = ctx.createGain(); ng.gain.setValueAtTime(0.35, time); ng.gain.exponentialRampToValueAtTime(0.0001, time + 0.35);
     src.connect(bp).connect(ng).connect(this.busInput); src.start(time); src.stop(time + 0.4);
   }
+  /**
+   * Vocal/sample chop : rejoue une courte tranche du sample importé (stutter
+   * "greazy" très Unicorn On K). `offset` = position dans le morceau (s).
+   */
+  playSlice(time, offset, dur, rate = 1, amp = 0.7) {
+    if (!this.sampleBuffer) return;
+    const ctx = this.ctx;
+    const off = clamp(offset, 0, Math.max(0, this.sampleBuffer.duration - dur));
+    const src = ctx.createBufferSource(); src.buffer = this.sampleBuffer; src.playbackRate.value = rate;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, time);
+    g.gain.linearRampToValueAtTime(amp, time + 0.003);
+    g.gain.setValueAtTime(amp, time + dur * 0.85);
+    g.gain.linearRampToValueAtTime(0.0001, time + dur);
+    src.connect(g).connect(this.busInput);
+    src.start(time, off, dur + 0.02);
+    src.stop(time + dur + 0.03);
+  }
+
   /** Riser de build-up : bruit dont la bande monte + volume croissant. */
   playRiser(time, dur) {
     const ctx = this.ctx;

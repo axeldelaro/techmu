@@ -28,11 +28,14 @@ export class OfflineRenderer {
   }
 
   /**
-   * Rend la configuration courante en WAV et déclenche le téléchargement.
+   * Rend la configuration courante et déclenche le téléchargement.
+   * @param {('mp3'|'wav')} [format]
    * @param {(p:number)=>void} [onProgress]
    * @returns {Promise<void>}
    */
-  async exportWav(onProgress) {
+  async render(format = 'mp3', onProgress) {
+    // MP3 indisponible si l'encodeur n'est pas chargé -> repli WAV.
+    if (format === 'mp3' && typeof lamejs === 'undefined') format = 'wav';
     const sr = this.engine.ctx.sampleRate;
     const buffer = this.engine.sampleBuffer;
     const arr = this.scheduler.arrangement;          // arrangement actif ?
@@ -82,11 +85,16 @@ export class OfflineRenderer {
     const rendered = await octx.startRendering();
     facade.kick.dispose();                            // évite la fuite d'abonnement
 
-    onProgress?.(85);
+    onProgress?.(60);
 
-    // ---- Encodage WAV + téléchargement ----
-    const blob = this._encodeWav(rendered);
-    this._download(blob, 'uptempo-export.wav');
+    // ---- Encodage + téléchargement ----
+    if (format === 'mp3') {
+      const blob = this._encodeMp3(rendered, (p) => onProgress?.(60 + Math.round(p * 0.4)));
+      this._download(blob, 'uptempo-export.mp3');
+    } else {
+      const blob = this._encodeWav(rendered);
+      this._download(blob, 'uptempo-export.wav');
+    }
     onProgress?.(100);
   }
 
@@ -128,8 +136,21 @@ export class OfflineRenderer {
     const kick = new HardcoreKick(octx, busInput, state);
 
     // Façade exposant l'API attendue par l'Arrangement / le pattern.
+    const buffer = this.engine.sampleBuffer;
     const facade = {
-      ctx: octx, busInput, sampleDuck, gaterGain, kick,
+      ctx: octx, busInput, sampleDuck, gaterGain, kick, sampleBuffer: buffer,
+      playSlice: (time, offset, dur, rate = 1, amp = 0.7) => {
+        if (!buffer) return;
+        const off = clamp(offset, 0, Math.max(0, buffer.duration - dur));
+        const src = octx.createBufferSource(); src.buffer = buffer; src.playbackRate.value = rate;
+        const g = octx.createGain();
+        g.gain.setValueAtTime(0.0001, time);
+        g.gain.linearRampToValueAtTime(amp, time + 0.003);
+        g.gain.setValueAtTime(amp, time + dur * 0.85);
+        g.gain.linearRampToValueAtTime(0.0001, time + dur);
+        src.connect(g).connect(busInput);
+        src.start(time, off, dur + 0.02); src.stop(time + dur + 0.03);
+      },
       duck: (time, amount) => {
         const f = state.get('fx'); if (!f.sidechainOn) return;
         const amt = amount != null ? amount : f.sidechainAmount;
@@ -210,6 +231,28 @@ export class OfflineRenderer {
         t += secs16; sg++;
       }
     }
+  }
+
+  /** Encode l'AudioBuffer rendu en MP3 (lamejs, 192 kbps stéréo). */
+  _encodeMp3(buffer, onProgress) {
+    const enc = new lamejs.Mp3Encoder(2, buffer.sampleRate, 192);
+    const L = buffer.getChannelData(0);
+    const R = buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : L;
+    const BLOCK = 1152;
+    const li = new Int16Array(BLOCK), ri = new Int16Array(BLOCK);
+    const data = [];
+    const toI16 = (x) => { x = x < -1 ? -1 : x > 1 ? 1 : x; return x < 0 ? x * 0x8000 : x * 0x7fff; };
+    for (let i = 0; i < buffer.length; i += BLOCK) {
+      const n = Math.min(BLOCK, buffer.length - i);
+      for (let j = 0; j < n; j++) { li[j] = toI16(L[i + j]); ri[j] = toI16(R[i + j]); }
+      const chunk = enc.encodeBuffer(li.subarray(0, n), ri.subarray(0, n));
+      if (chunk.length) data.push(new Uint8Array(chunk));
+      if ((i & 0x3ffff) === 0) onProgress?.(i / buffer.length);
+    }
+    const end = enc.flush();
+    if (end.length) data.push(new Uint8Array(end));
+    onProgress?.(1);
+    return new Blob(data, { type: 'audio/mpeg' });
   }
 
   /** Convertit l'AudioBuffer rendu en WAV 16-bit stéréo. */

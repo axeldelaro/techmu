@@ -288,21 +288,21 @@ export class UIController {
 
   _bindExport() {
     const btn = $('#btn-export');
-    btn.addEventListener('click', async () => {
+    btn.addEventListener('click', async (e) => {
       if (btn.classList.contains('busy')) return;
+      const format = e.shiftKey ? 'wav' : 'mp3';   // MP3 par défaut, WAV si Shift
       if (!this.engine.sampleBuffer && !this.scheduler.arrangement) {
-        // Rien à exporter d'utile : on prévient mais on rend quand même le pattern.
         $('#status-text').textContent = 'Export : aucun sample — rendu du pattern courant.';
       }
       btn.classList.add('busy');
       const label = btn.textContent;
       btn.textContent = '⤓ RENDU…';
-      $('#status-text').textContent = 'Bounce hors-ligne (plus rapide que le temps réel)…';
+      $('#status-text').textContent = `Bounce hors-ligne ${format.toUpperCase()} (plus rapide que le temps réel)…`;
       try {
-        await this.offlineRenderer.exportWav((p) => {
+        await this.offlineRenderer.render(format, (p) => {
           btn.textContent = `⤓ ${p}%`;
         });
-        $('#status-text').textContent = 'Export terminé : uptempo-export.wav téléchargé.';
+        $('#status-text').textContent = `Export terminé : uptempo-export.${format} téléchargé.`;
       } catch (e) {
         $('#status-text').textContent = 'Export : erreur — ' + e.message;
       } finally {

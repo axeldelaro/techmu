@@ -44,7 +44,7 @@
       <button id="btn-buildup" class="t-btn build" title="Stutter / Beatmasher (maintenir)">BUILD-UP</button>
       <button id="btn-save" class="t-btn">SAVE</button>
       <button id="btn-load" class="t-btn">LOAD</button>
-      <button id="btn-export" class="t-btn export" title="Bounce hors-ligne rapide (.wav)">⤓ EXPORT RAPIDE</button>
+      <button id="btn-export" class="t-btn export" title="Bounce hors-ligne rapide — MP3 (Shift+clic = WAV)">⤓ EXPORT RAPIDE</button>
       <button id="btn-rec" class="t-btn rec" title="Export audio">● REC</button>
       <span id="midi-status" class="midi-status" title="État Web MIDI">MIDI: —</span>
     </div>
@@ -125,6 +125,8 @@
     <span>UptempoWebDAW v10 · 100% Vanilla JS · Web Audio API</span>
   </footer>
 
+  <!-- Encodeur MP3 pur-JS (lamejs), hébergé localement -> expose window.lamejs -->
+  <script src="./js/vendor/lame.min.js"></script>
   <script type="module" src="./js/main.js"></script>
 </body>
 </html>

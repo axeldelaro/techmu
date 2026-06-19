@@ -310,25 +310,52 @@ function detectStructure(pcm, sampleRate, bpm, offsetMs, fundamental) {
   const R = smoothArr(rms, 4), H = smoothArr(hf, 4);
   let rmax = 1e-9, hmax = 1e-9;
   for (let i = 0; i < R.length; i++) { if (R[i] > rmax) rmax = R[i]; if (H[i] > hmax) hmax = H[i]; }
-  const score = new Float32Array(R.length);
-  for (let i = 0; i < R.length; i++) score[i] = (R[i] / rmax) * (0.4 + 0.6 * H[i] / hmax);
+  const eb = new Float32Array(R.length); // énergie × brillance (par frame 0.25s)
+  for (let i = 0; i < R.length; i++) eb[i] = (R[i] / rmax) * (0.4 + 0.6 * H[i] / hmax);
 
-  // Seuils par percentiles.
-  const sortedS = Array.from(score).sort((a, b) => a - b);
-  const pct = (p) => sortedS[Math.min(sortedS.length - 1, Math.max(0, Math.floor(p * sortedS.length)))];
-  const HI = pct(0.60), LO = pct(0.42);
-  const frameClass = (t) => {
-    const k = Math.min(score.length - 1, Math.max(0, Math.floor(t / 0.25)));
-    return score[k] > HI ? 2 : score[k] < LO ? 0 : 1;
-  };
-
-  // Classe par mesure (majorité sur les 4 temps).
-  const barClass = new Array(totalBars);
+  // ---- Énergie/brillance MOYENNE par mesure ----
+  const barEB = new Float32Array(totalBars);
   for (let b = 0; b < totalBars; b++) {
-    const t0 = downbeat + b * barLen; const cnt = [0, 0, 0];
-    for (let f = 0; f < 4; f++) cnt[frameClass(t0 + f * beat)]++;
-    barClass[b] = cnt[2] >= 2 ? 2 : cnt[0] >= 3 ? 0 : 1;
+    const t0 = downbeat + b * barLen; let s = 0, c = 0;
+    for (let f = 0; f < 4; f++) { const k = Math.min(eb.length - 1, Math.max(0, Math.floor((t0 + f * beat) / 0.25))); s += eb[k]; c++; }
+    barEB[b] = s / c;
   }
+
+  // ---- DÉTECTION DE REFRAIN POUSSÉE : auto-similarité de chroma ----
+  // Le refrain se RÉPÈTE (mêmes accords). On calcule l'empreinte chroma
+  // (12 classes de hauteur) de chaque mesure via FFT, puis un score de
+  // répétition = similarité cosinus maximale avec d'AUTRES mesures
+  // éloignées. Une mesure énergique ET répétée ailleurs = refrain.
+  const chroma = [];
+  for (let b = 0; b < totalBars; b++)
+    chroma.push(chromaForRange(pcm, sampleRate, Math.floor((downbeat + b * barLen) * sampleRate)));
+  const rep = new Float32Array(totalBars);
+  for (let b = 0; b < totalBars; b++) {
+    const sims = [];
+    for (let j = 0; j < totalBars; j++) {
+      if (Math.abs(j - b) < 4) continue; // ignore le voisinage immédiat
+      let dot = 0; const cb = chroma[b], cj = chroma[j];
+      for (let k = 0; k < 12; k++) dot += cb[k] * cj[k];
+      sims.push(dot);
+    }
+    sims.sort((a, b) => b - a);
+    // Moyenne des 4 meilleures similarités -> robustesse aux répétitions multiples.
+    let s = 0, n = Math.min(4, sims.length);
+    for (let k = 0; k < n; k++) s += sims[k];
+    rep[b] = n ? s / n : 0;
+  }
+  // Normalise EB et REP, puis combine.
+  let ebMax = 1e-9, repMax = 1e-9;
+  for (let b = 0; b < totalBars; b++) { if (barEB[b] > ebMax) ebMax = barEB[b]; if (rep[b] > repMax) repMax = rep[b]; }
+  const combined = new Float32Array(totalBars);
+  for (let b = 0; b < totalBars; b++) combined[b] = 0.55 * (barEB[b] / ebMax) + 0.45 * (rep[b] / repMax);
+
+  // Seuils par percentiles (sur les mesures).
+  const sortedS = Array.from(combined).sort((a, b) => a - b);
+  const pct = (p) => sortedS[Math.min(sortedS.length - 1, Math.max(0, Math.floor(p * sortedS.length)))];
+  const HI = pct(0.62), LO = pct(0.42);
+  const barClass = new Array(totalBars);
+  for (let b = 0; b < totalBars; b++) barClass[b] = combined[b] > HI ? 2 : combined[b] < LO ? 0 : 1;
   // Lissage : absorbe les mesures isolées.
   for (let pass = 0; pass < 3; pass++)
     for (let b = 1; b < totalBars - 1; b++)
@@ -383,6 +410,39 @@ function sectionPitch(pcm, sampleRate, s0, s1) {
     if (c > bestc) { bestc = c; best = hz; }
   }
   return best;
+}
+
+/**
+ * Empreinte chroma (12 classes de hauteur) d'une fenêtre, via FFT.
+ * Replie chaque bin fréquentiel sur sa classe de hauteur (C, C#, …, B) et
+ * cumule la magnitude. Le vecteur est normalisé (L2) pour comparer les
+ * mesures par similarité cosinus (détection de répétition = refrain).
+ * @returns {Float32Array} 12 valeurs normalisées
+ */
+function chromaForRange(pcm, sampleRate, s0) {
+  const Nf = 16384;
+  const out = new Float32Array(12);
+  if (pcm.length < Nf) return out;
+  if (s0 + Nf > pcm.length) s0 = pcm.length - Nf;
+  if (s0 < 0) s0 = 0;
+  const re = new Float32Array(Nf), im = new Float32Array(Nf);
+  for (let i = 0; i < Nf; i++) {
+    const w = 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (Nf - 1)); // Hann
+    re[i] = pcm[s0 + i] * w;
+  }
+  fft(re, im);
+  const half = Nf >> 1;
+  for (let bin = 1; bin < half; bin++) {
+    const f = bin * sampleRate / Nf;
+    if (f < 55 || f > 2000) continue;     // registre utile pour les accords
+    const mag = Math.hypot(re[bin], im[bin]);
+    const midi = Math.round(69 + 12 * Math.log2(f / 440));
+    out[((midi % 12) + 12) % 12] += mag;
+  }
+  let nrm = 0; for (let k = 0; k < 12; k++) nrm += out[k] * out[k];
+  nrm = Math.sqrt(nrm) || 1;
+  for (let k = 0; k < 12; k++) out[k] /= nrm;
+  return out;
 }
 
 /* ===== Orchestration de l'analyse ===== */
