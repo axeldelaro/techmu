@@ -1,9 +1,7 @@
 /* =====================================================================
    OfflineRenderer.js — Export RAPIDE (bounce hors-ligne).
-
-   Au lieu d'enregistrer en temps réel, on reconstruit le graphe audio 
-   dans un OfflineAudioContext. Version modifiée : WAV exclusif pour
-   contourner les limitations de mémoire RAM lors de l'encodage MP3.
+   Version optimisée : Export WAV asynchrone par blocs (chunks) pour
+   éviter les gels CPU sur mobile.
    ===================================================================== */
 
 import { HardcoreKick } from './instruments/HardcoreKick.js';
@@ -12,22 +10,12 @@ import { Arrangement } from './Arrangement.js';
 import { clamp } from './utils.js';
 
 export class OfflineRenderer {
-  /**
-   * @param {import('./AudioEngine.js').AudioEngine} engine
-   * @param {import('./StateManager.js').StateManager} state
-   * @param {import('./Scheduler.js').Scheduler} scheduler
-   */
   constructor(engine, state, scheduler) {
     this.engine = engine;
     this.state = state;
     this.scheduler = scheduler;
   }
 
-  /**
-   * Rend la configuration courante et déclenche le téléchargement.
-   * @param {(p:number)=>void} [onProgress]
-   * @returns {Promise<void>}
-   */
   async render(onProgress) {
     const buffer = this.engine.sampleBuffer;
     const structure = this.scheduler.arrangement ? this.scheduler.arrangement.s : null;
@@ -35,13 +23,6 @@ export class OfflineRenderer {
     this._download(blob, `uptempo-export.wav`);
   }
 
-  /**
-   * Rend un buffer + une structure d'arrangement en Blob WAV.
-   * @param {AudioBuffer} buffer
-   * @param {object|null} structure
-   * @param {(p:number)=>void} [onProgress]
-   * @returns {Promise<Blob>}
-   */
   async renderToBlob(buffer, structure, onProgress) {
     const sr = this.engine.ctx.sampleRate;
     const downbeat = structure ? structure.downbeat : 0;
@@ -72,6 +53,7 @@ export class OfflineRenderer {
     onProgress?.(30);
 
     let fake = 30;
+    // La barre monte jusqu'à 85% pendant le calcul du son
     const ticker = setInterval(() => { fake = Math.min(85, fake + 1); onProgress?.(fake); }, 200);
     let rendered;
     try {
@@ -85,9 +67,10 @@ export class OfflineRenderer {
       clearInterval(ticker);
       facade.kick.dispose(); facade.subBass.dispose();
     }
+    
+    // Le son est calculé, on passe à l'encodage WAV optimisé
     onProgress?.(90);
-
-    const blob = this._encodeWav(rendered);
+    const blob = await this._encodeWavAsync(rendered, onProgress);
     onProgress?.(100);
     return blob;
   }
@@ -95,7 +78,6 @@ export class OfflineRenderer {
   _buildGraph(octx, buffer) {
     const state = this.state;
     const fx = state.get('fx');
-
     const busInput = octx.createGain();
 
     const djFilter = octx.createBiquadFilter();
@@ -132,34 +114,25 @@ export class OfflineRenderer {
         const off = clamp(offset, 0, Math.max(0, buffer.duration - dur));
         const src = octx.createBufferSource(); src.buffer = buffer; src.playbackRate.value = rate;
         const g = octx.createGain();
-        g.gain.setValueAtTime(0.0001, time);
-        g.gain.linearRampToValueAtTime(amp, time + 0.003);
-        g.gain.setValueAtTime(amp, time + dur * 0.85);
-        g.gain.linearRampToValueAtTime(0.0001, time + dur);
-        src.connect(g).connect(busInput);
-        src.start(time, off, dur + 0.02); src.stop(time + dur + 0.03);
+        g.gain.setValueAtTime(0.0001, time); g.gain.linearRampToValueAtTime(amp, time + 0.003);
+        g.gain.setValueAtTime(amp, time + dur * 0.85); g.gain.linearRampToValueAtTime(0.0001, time + dur);
+        src.connect(g).connect(busInput); src.start(time, off, dur + 0.02); src.stop(time + dur + 0.03);
       },
       duck: (time, amount) => {
         const f = state.get('fx'); if (!f.sidechainOn) return;
         const amt = amount != null ? amount : f.sidechainAmount;
         const g = sampleDuck.gain, floor = clamp(1 - amt, 0.0001, 1);
-        g.setValueAtTime(1, time);
-        g.linearRampToValueAtTime(floor, time + 0.005);
+        g.setValueAtTime(1, time); g.linearRampToValueAtTime(floor, time + 0.005);
         g.linearRampToValueAtTime(1, time + f.sidechainRelease);
       },
       gate: (time, stepDur) => {
         const g = gaterGain.gain;
-        g.setValueAtTime(1, time);
-        g.linearRampToValueAtTime(0.0001, time + 0.003);
-        g.linearRampToValueAtTime(1, time + stepDur * 0.5);
+        g.setValueAtTime(1, time); g.linearRampToValueAtTime(0.0001, time + 0.003); g.linearRampToValueAtTime(1, time + stepDur * 0.5);
       },
       playHat: (time, amp = 0.12) => this._noiseVoice(octx, busInput, kick.noiseBuffer, time, 0.04, 'highpass', 7000, 0.7, amp, 0.06),
-      playClap: (time, amp = 0.22) => {
-        for (let k = 0; k < 3; k++) this._noiseVoice(octx, busInput, kick.noiseBuffer, time + k * 0.008, 0.07, 'bandpass', 1700, 1.2, amp, 0.09);
-      },
+      playClap: (time, amp = 0.22) => { for (let k = 0; k < 3; k++) this._noiseVoice(octx, busInput, kick.noiseBuffer, time + k * 0.008, 0.07, 'bandpass', 1700, 1.2, amp, 0.09); },
       playImpact: (time) => {
-        const osc = octx.createOscillator(); osc.type = 'sine';
-        const g = octx.createGain();
+        const osc = octx.createOscillator(); osc.type = 'sine'; const g = octx.createGain();
         osc.frequency.setValueAtTime(80, time); osc.frequency.exponentialRampToValueAtTime(35, time + 0.2);
         g.gain.setValueAtTime(0.9, time); g.gain.exponentialRampToValueAtTime(0.0001, time + 0.4);
         osc.connect(g).connect(busInput); osc.start(time); osc.stop(time + 0.45);
@@ -170,16 +143,14 @@ export class OfflineRenderer {
         const bp = octx.createBiquadFilter(); bp.type = 'bandpass'; bp.Q.value = 1.5;
         bp.frequency.setValueAtTime(500, time); bp.frequency.exponentialRampToValueAtTime(8000, time + durR);
         const g = octx.createGain();
-        g.gain.setValueAtTime(0.0001, time); g.gain.exponentialRampToValueAtTime(0.28, time + durR);
-        g.gain.linearRampToValueAtTime(0.0001, time + durR + 0.05);
+        g.gain.setValueAtTime(0.0001, time); g.gain.exponentialRampToValueAtTime(0.28, time + durR); g.gain.linearRampToValueAtTime(0.0001, time + durR + 0.05);
         src.connect(bp).connect(g).connect(busInput); src.start(time); src.stop(time + durR + 0.1);
       },
       playReverseSwell: (time, dur, amp = 0.22) => {
         const src = octx.createBufferSource(); src.buffer = kick.noiseBuffer; src.loop = true;
         const bp = octx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 6000; bp.Q.value = 0.6;
         const g = octx.createGain();
-        g.gain.setValueAtTime(0.0001, time); g.gain.exponentialRampToValueAtTime(amp, time + dur);
-        g.gain.linearRampToValueAtTime(0.0001, time + dur + 0.02);
+        g.gain.setValueAtTime(0.0001, time); g.gain.exponentialRampToValueAtTime(amp, time + dur); g.gain.linearRampToValueAtTime(0.0001, time + dur + 0.02);
         src.connect(bp).connect(g).connect(busInput); src.start(time); src.stop(time + dur + 0.05);
       },
       playSweepDown: (time, dur, amp = 0.2) => {
@@ -198,10 +169,8 @@ export class OfflineRenderer {
     const src = octx.createBufferSource(); src.buffer = noiseBuf; src.loop = true;
     const filt = octx.createBiquadFilter(); filt.type = type; filt.frequency.value = freq; filt.Q.value = Q;
     const g = octx.createGain();
-    g.gain.setValueAtTime(amp, time);
-    g.gain.exponentialRampToValueAtTime(0.0001, time + decay);
-    src.connect(filt).connect(g).connect(dest);
-    src.start(time); src.stop(time + stop);
+    g.gain.setValueAtTime(amp, time); g.gain.exponentialRampToValueAtTime(0.0001, time + decay);
+    src.connect(filt).connect(g).connect(dest); src.start(time); src.stop(time + stop);
   }
 
   _applyDjFilter(node, pos, sr) {
@@ -213,7 +182,6 @@ export class OfflineRenderer {
   _scheduleAll(facade, octx, dur, structure) {
     const bpm = structure && structure.kbpm ? structure.kbpm : this.state.get('transport.bpm');
     const secs16 = (60 / bpm) / 4;
-
     if (structure) {
       const arrangement = new Arrangement(facade, structure);
       let t = 0, sg = 0;
@@ -230,25 +198,50 @@ export class OfflineRenderer {
     }
   }
 
-  _encodeWav(buffer) {
+  /**
+   * Encode le Buffer WAV en blocs asynchrones pour ne pas freezer le mobile.
+   */
+  async _encodeWavAsync(buffer, onProgress) {
+    // Rend la main au navigateur pour qu'il puisse peindre le "90%" à l'écran
+    await new Promise(r => setTimeout(r, 50));
+
     const ch = Math.min(2, buffer.numberOfChannels);
     const L = buffer.getChannelData(0);
     const R = ch > 1 ? buffer.getChannelData(1) : L;
     const frames = buffer.length;
-    const blockAlign = 4, dataSize = frames * blockAlign;
-    const ab = new ArrayBuffer(44 + dataSize); const view = new DataView(ab);
+    const blockAlign = 4; // 2 canaux * 2 octets
+    const dataSize = frames * blockAlign;
+    const ab = new ArrayBuffer(44 + dataSize);
+    const view = new DataView(ab);
+
     const w = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
     w(0, 'RIFF'); view.setUint32(4, 36 + dataSize, true); w(8, 'WAVE'); w(12, 'fmt ');
     view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 2, true);
     view.setUint32(24, buffer.sampleRate, true); view.setUint32(28, buffer.sampleRate * blockAlign, true);
     view.setUint16(32, blockAlign, true); view.setUint16(34, 16, true); w(36, 'data'); view.setUint32(40, dataSize, true);
-    let off = 44;
-    for (let i = 0; i < frames; i++) {
-      const l = Math.max(-1, Math.min(1, L[i])), r = Math.max(-1, Math.min(1, R[i]));
-      view.setInt16(off, l < 0 ? l * 0x8000 : l * 0x7fff, true); off += 2;
-      view.setInt16(off, r < 0 ? r * 0x8000 : r * 0x7fff, true); off += 2;
+
+    // Vue haute performance
+    const pcm16 = new Int16Array(ab, 44);
+    const CHUNK = 250000; // Traite par blocs d'environ 5 secondes
+
+    for (let i = 0; i < frames; i += CHUNK) {
+      const end = Math.min(i + CHUNK, frames);
+      for (let j = i; j < end; j++) {
+        const l = L[j], r = R[j];
+        // Écrêtage et conversion rapide
+        pcm16[j * 2] = l < 0 ? Math.max(-1, l) * 0x8000 : Math.min(1, l) * 0x7fff;
+        pcm16[j * 2 + 1] = r < 0 ? Math.max(-1, r) * 0x8000 : Math.min(1, r) * 0x7fff;
+      }
+      
+      // La progression passe de 90% à 100%
+      const prog = 90 + Math.floor((end / frames) * 10);
+      onProgress?.(prog);
+      
+      // Laisse le processeur "respirer" pour éviter que le navigateur plante la page
+      await new Promise(r => setTimeout(r, 0));
     }
-    return new Blob([view], { type: 'audio/wav' });
+
+    return new Blob([ab], { type: 'audio/wav' });
   }
 
   _download(blob, name) {
