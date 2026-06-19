@@ -28,9 +28,9 @@ import { buildSegments } from './SectionModel.js';
    --------------------------------------------------------------------- */
 const WORKER_SRC = `
 self.onmessage = (e) => {
-  const { pcm, sampleRate } = e.data;
+  const { pcm, sampleRate, bpmOverride } = e.data;
   try {
-    const result = analyze(pcm, sampleRate);
+    const result = analyze(pcm, sampleRate, bpmOverride);
     self.postMessage({ ok: true, result });
   } catch (err) {
     self.postMessage({ ok: false, error: String(err && err.message || err) });
@@ -488,7 +488,7 @@ function chromaForRange(pcm, sampleRate, s0) {
 }
 
 /* ===== Orchestration de l'analyse ===== */
-function analyze(pcm, sampleRate) {
+function analyze(pcm, sampleRate, bpmOverride) {
   // Limite la durée analysée pour le rythme (perf), garde tout pour la FFT.
   const maxSamples = Math.min(pcm.length, sampleRate * CFG.analyzeSeconds);
   const rhythmSlice = pcm.subarray(0, maxSamples);
@@ -496,7 +496,10 @@ function analyze(pcm, sampleRate) {
   const filtered = lowpass(rhythmSlice, sampleRate, CFG.lpCutoffHz);
   const { env } = energyEnvelope(filtered, sampleRate, CFG.envRate);
 
-  const { bpm, confidence } = detectBPM(env, CFG.envRate);
+  // BPM : override manuel si fourni (fiable), sinon autocorrélation.
+  let bpm, confidence;
+  if (bpmOverride && bpmOverride > 40) { bpm = bpmOverride; confidence = 1; }
+  else { const r = detectBPM(env, CFG.envRate); bpm = r.bpm; confidence = r.confidence; }
   const offsetMs = detectDownbeat(filtered, sampleRate);
   const fundamental = detectFundamental(pcm, sampleRate);
 
@@ -526,18 +529,19 @@ export class SmartAnalyzer {
    * Lance l'analyse DSP du buffer courant dans le Worker.
    * @returns {Promise<{bpm:number, offsetMs:number, fundamental:number, confidence:number}>}
    */
-  analyze() {
+  analyze(opts = {}) {
     const buf = this.engine.sampleBuffer;
     if (!buf) return Promise.reject(new Error('Aucun sample chargé.'));
-    return this.analyzeBuffer(buf);
+    return this.analyzeBuffer(buf, opts);
   }
 
   /**
    * Analyse DSP d'un AudioBuffer arbitraire (utilisé par le lot).
    * @param {AudioBuffer} buf
+   * @param {object} [opts] - { bpm } override manuel du BPM
    * @returns {Promise<object>}
    */
-  analyzeBuffer(buf) {
+  analyzeBuffer(buf, opts = {}) {
     // Downmix mono (moyenne des canaux) pour l'analyse.
     const ch0 = buf.getChannelData(0);
     const mono = new Float32Array(ch0.length);
@@ -562,7 +566,7 @@ export class SmartAnalyzer {
       this.worker.addEventListener('message', handler);
       // Transfert zéro-copie du PCM vers le Worker.
       this.worker.postMessage(
-        { pcm: mono, sampleRate: buf.sampleRate },
+        { pcm: mono, sampleRate: buf.sampleRate, bpmOverride: opts.bpm || 0 },
         [mono.buffer]
       );
     });
@@ -577,7 +581,7 @@ export class SmartAnalyzer {
    * @returns {Promise<object>} données d'analyse
    */
   async analyzeAndRemix(opts = {}) {
-    const data = await this.analyze();
+    const data = await this.analyze({ bpm: opts.bpm || 0 });
     this.applyAutoRemix(data, opts);
     return data;
   }

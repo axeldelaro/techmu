@@ -18,15 +18,39 @@ import { BatchProcessor } from './BatchProcessor.js';
 import { UIController } from './UIController.js';
 import { $ } from './utils.js';
 
+// Numéro de build : permet de vérifier qu'on charge bien la dernière version
+// (si tu ne vois pas ce numéro dans la console, ton navigateur sert un CACHE).
+const BUILD = 'v15-2025-fixboot-export';
+console.log('%cUptempoWebDAW build ' + BUILD, 'color:#7CFC00;font-weight:bold');
+
 const bootOverlay = $('#boot-overlay');
 const bootBtn = $('#boot-btn');
+const bootHint = document.querySelector('.boot-hint');
+if (bootHint) bootHint.textContent = 'Build ' + BUILD + ' — si erreur, vide le cache (Ctrl+Shift+R).';
 
 let booted = false;
 
 async function boot() {
   if (booted) return;
   booted = true;
+  try {
+    await _boot();
+  } catch (err) {
+    booted = false;
+    console.error('Boot error:', err);
+    // Affiche l'erreur à l'écran au lieu d'un bouton mort.
+    const card = document.querySelector('.boot-card');
+    if (card) {
+      const msg = document.createElement('p');
+      msg.style.cssText = 'color:#ff3b1f;font-size:.8rem;margin-top:14px;max-width:420px';
+      msg.textContent = 'Erreur de démarrage : ' + (err && err.message || err) +
+        ' — fais Ctrl+Shift+R (vider le cache).';
+      card.appendChild(msg);
+    }
+  }
+}
 
+async function _boot() {
   // 1) État partagé (source de vérité).
   const state = new StateManager();
 

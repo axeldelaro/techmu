@@ -81,20 +81,23 @@ export class OfflineRenderer {
     this._scheduleAll(facade, octx, dur, structure);
     onProgress?.(30);
 
-    // Progression PENDANT le rendu via suspend()/resume() : évite l'impression
-    // de blocage à 30% sur les longs morceaux et confirme l'avancement réel.
-    const total = octx.length / sr;
-    const SLICES = 15;
-    for (let i = 1; i < SLICES; i++) {
-      const at = total * i / SLICES;
-      octx.suspend(at).then(() => {
-        onProgress?.(30 + Math.round((i / SLICES) * 30));
-        octx.resume();
-      }).catch(() => {});
+    // Progression animée pendant le rendu (suspend() n'est pas fiable hors
+    // Chrome -> on ne l'utilise PAS). Watchdog : ne peut jamais bloquer
+    // indéfiniment ; au-delà du timeout on remonte une erreur claire.
+    let fake = 30;
+    const ticker = setInterval(() => { fake = Math.min(58, fake + 1); onProgress?.(fake); }, 200);
+    let rendered;
+    try {
+      rendered = await Promise.race([
+        octx.startRendering(),
+        new Promise((_, rej) => setTimeout(
+          () => rej(new Error('Rendu trop long (timeout 90s). Réduis la densité ou prends un morceau plus court.')),
+          90000))
+      ]);
+    } finally {
+      clearInterval(ticker);
+      facade.kick.dispose(); facade.subBass.dispose();
     }
-
-    const rendered = await octx.startRendering();
-    facade.kick.dispose(); facade.subBass.dispose();
     onProgress?.(60);
 
     if (format === 'mp3') return this._encodeMp3(rendered, (p) => onProgress?.(60 + Math.round(p * 0.4)));

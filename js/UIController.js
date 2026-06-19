@@ -36,6 +36,7 @@ export class UIController {
     this._bindBatch();
     this._bindBuildup();
     this._bindAutoRemix();
+    this._bindBpmSearch();
     this._bindKeyboard();
 
     // Playhead du séquenceur + surbrillance de la section en lecture.
@@ -448,7 +449,8 @@ export class UIController {
       $('#analysis-readout').textContent = 'IA: analyse DSP en cours (Web Worker)…';
       $('#status-text').textContent = 'Auto-Remix : détection BPM / phase / harmonie…';
       try {
-        const a = await this.smartAnalyzer.analyzeAndRemix({ autoplay: true });
+        const knownBpm = parseInt($('#known-bpm').value, 10) || 0;
+        const a = await this.smartAnalyzer.analyzeAndRemix({ autoplay: true, bpm: knownBpm });
         const noteName = this._hzToNote(a.fundamental);
         const st = a.structure || {};
         const nChorus = (st.sections || []).filter((s) => s === 'chorus').length;
@@ -470,6 +472,20 @@ export class UIController {
         btn.textContent = '⚡ 1-CLICK AUTO-REMIX';
       }
     });
+  }
+
+  /** Lien de recherche du BPM en ligne (rempli avec le nom du fichier). */
+  _bindBpmSearch() {
+    const link = $('#bpm-search');
+    const update = () => {
+      let name = ($('#file-name').textContent || '').split('·')[0].replace(/\.[^.]+$/, '').trim();
+      if (!name || name.startsWith('—')) name = '';
+      const q = encodeURIComponent(name ? name + ' bpm key' : 'song bpm key finder');
+      link.href = 'https://www.google.com/search?q=' + q;
+    };
+    update();
+    // pointerdown se déclenche avant la navigation -> href à jour.
+    link.addEventListener('pointerdown', update);
   }
 
   /** Convertit une fréquence (Hz) en nom de note pour l'affichage. */
