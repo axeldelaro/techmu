@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UptempoWebDAW — Live Remix / HardTechno · Industrial · Uptempo</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <!-- =====================================================================
+       BOOT OVERLAY — required by the AudioContext "User Gesture" policy.
+       The AudioContext is created/resumed only after this explicit click.
+       ===================================================================== -->
+  <div id="boot-overlay" class="boot-overlay">
+    <div class="boot-card">
+      <h1 class="boot-logo">UPTEMPO<span>WEB</span>DAW</h1>
+      <p class="boot-sub">Live Remix Engine — HardTechno / Industrial / Uptempo Hardcore</p>
+      <button id="boot-btn" class="boot-btn">⏻ INITIALISER LE MOTEUR AUDIO</button>
+      <p class="boot-hint">Un clic est requis par la politique « User Gesture » du navigateur.</p>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <header class="topbar">
+    <div class="brand">UPTEMPO<span>WEB</span>DAW</div>
+
+    <div class="transport">
+      <button id="btn-play" class="t-btn" title="Play/Stop (Espace)">▶</button>
+      <button id="btn-stop" class="t-btn" title="Stop">■</button>
+      <div class="bpm-wrap">
+        <label>BPM</label>
+        <input id="bpm-input" type="number" min="60" max="320" step="1" value="180" />
+      </div>
+      <div class="swing-wrap">
+        <label>SWING</label>
+        <input id="swing-input" type="range" min="0" max="0.5" step="0.01" value="0" />
+        <span id="swing-val" class="readout">0%</span>
+      </div>
+      <div class="step-led" id="beat-led"></div>
+    </div>
+
+    <div class="topbar-actions">
+      <button id="btn-buildup" class="t-btn build" title="Stutter / Beatmasher (maintenir)">BUILD-UP</button>
+      <button id="btn-save" class="t-btn">SAVE</button>
+      <button id="btn-load" class="t-btn">LOAD</button>
+      <button id="btn-rec" class="t-btn rec" title="Export audio">● REC</button>
+      <span id="midi-status" class="midi-status" title="État Web MIDI">MIDI: —</span>
+    </div>
+  </header>
+
+  <main class="rack">
+
+    <!-- ============ MASTER TRACK / IMPORT ============ -->
+    <section class="module" id="mod-master">
+      <h2 class="module-title">1 · MASTER TRACK / IMPORT</h2>
+      <div id="dropzone" class="dropzone">
+        <p>Glissez un fichier <b>.mp3 / .wav / .flac</b> ici</p>
+        <input id="file-input" type="file" accept=".mp3,.wav,.flac,audio/*" hidden />
+        <button id="file-btn" class="mini-btn">Parcourir…</button>
+        <p id="file-name" class="file-name">— aucun sample —</p>
+        <progress id="decode-progress" max="100" value="0" hidden></progress>
+      </div>
+      <div class="row">
+        <button id="track-play" class="mini-btn">▶ Track</button>
+        <button id="track-stop" class="mini-btn">■</button>
+        <label class="chk"><input type="checkbox" id="track-loop" checked /> Loop</label>
+      </div>
+      <div class="knob-row" id="knobs-master"></div>
+    </section>
+
+    <!-- ============ HARDCORE KICK ============ -->
+    <section class="module" id="mod-kick">
+      <h2 class="module-title">2 · HARDCORE KICK SYNTH</h2>
+      <div class="knob-row" id="knobs-kick"></div>
+      <div class="row">
+        <label class="sel">Distorsion
+          <select id="kick-curve">
+            <option value="hardclip">Hard Clipping</option>
+            <option value="foldback">Foldback</option>
+            <option value="softsat">Soft Saturation</option>
+          </select>
+        </label>
+        <button id="kick-audition" class="mini-btn">Test Kick</button>
+      </div>
+    </section>
+
+    <!-- ============ ACID 303 ============ -->
+    <section class="module" id="mod-acid">
+      <h2 class="module-title">3 · ACID 303 BASSLINE</h2>
+      <div class="knob-row" id="knobs-acid"></div>
+      <div class="row">
+        <label class="sel">Waveform
+          <select id="acid-wave">
+            <option value="sawtooth">Sawtooth</option>
+            <option value="square">Square</option>
+          </select>
+        </label>
+        <label class="sel">Root
+          <select id="acid-root"></select>
+        </label>
+      </div>
+    </section>
+
+    <!-- ============ FX RACK ============ -->
+    <section class="module" id="mod-fx">
+      <h2 class="module-title">5 · FX RACK / SIDECHAIN</h2>
+      <div class="knob-row" id="knobs-fx"></div>
+      <div class="row">
+        <label class="chk"><input type="checkbox" id="sidechain-on" checked /> Sidechain Ducking</label>
+        <label class="chk"><input type="checkbox" id="djfilter-on" /> DJ Filter actif</label>
+      </div>
+    </section>
+
+    <!-- ============ VISUALISATION ============ -->
+    <section class="module module-wide" id="mod-viz">
+      <h2 class="module-title">9 · ANALYSEUR</h2>
+      <div class="viz-grid">
+        <canvas id="scope" class="viz-canvas" width="480" height="120"></canvas>
+        <canvas id="spectrum" class="viz-canvas" width="480" height="120"></canvas>
+        <div class="vu-wrap">
+          <div class="vu"><div id="vu-l" class="vu-bar"></div><span>L</span></div>
+          <div class="vu"><div id="vu-r" class="vu-bar"></div><span>R</span></div>
+          <div id="peak-led" class="peak-led">PEAK</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ SEQUENCER ============ -->
+    <section class="module module-full" id="mod-seq">
+      <h2 class="module-title">4 · STEP SEQUENCER (16)</h2>
+      <div id="sequencer" class="sequencer"></div>
+    </section>
+
+  </main>
+
+  <footer class="statusbar">
+    <span id="status-text">Prêt.</span>
+    <span class="spacer"></span>
+    <span>UptempoWebDAW v10 · 100% Vanilla JS · Web Audio API</span>
+  </footer>
+
+  <script type="module" src="./js/main.js"></script>
+</body>
+</html>
