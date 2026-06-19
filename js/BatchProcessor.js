@@ -1,10 +1,6 @@
 /* =====================================================================
    BatchProcessor.js — Traitement EN LOT de plusieurs morceaux.
-
-   Pour chaque fichier : décodage (non destructif) -> analyse -> détection
-   de structure -> rendu hors-ligne -> téléchargement. Les réglages de son
-   COURANTS (kick, basse, FX) sont appliqués à tous les morceaux. La session
-   live (sample chargé, arrangement) n'est pas modifiée.
+   (Version modifiée : Export WAV exclusif)
    ===================================================================== */
 
 import { el } from './utils.js';
@@ -34,9 +30,8 @@ export class BatchProcessor {
   /**
    * Traite une liste de fichiers séquentiellement.
    * @param {FileList|File[]} files
-   * @param {('mp3'|'wav')} format
    */
-  async run(files, format = 'mp3') {
+  async run(files) {
     if (this.running) return;
     this.running = true;
     this.listEl.innerHTML = '';
@@ -56,12 +51,11 @@ export class BatchProcessor {
         else structure = null;
 
         row.status('rendu…');
-        const blob = await this.offlineRenderer.renderToBlob(buf, structure, format, (p) => row.progress(p));
+        const blob = await this.offlineRenderer.renderToBlob(buf, structure, (p) => row.progress(p));
 
         const base = file.name.replace(/\.[^.]+$/, '');
-        const ext = blob.type.includes('mpeg') ? 'mp3' : 'wav';
-        this.offlineRenderer._download(blob, `${base}-uptempo.${ext}`);
-        row.status(`✅ terminé (.${ext})`);
+        this.offlineRenderer._download(blob, `${base}-uptempo.wav`);
+        row.status(`✅ terminé (.wav)`);
         done++;
       } catch (e) {
         row.status('❌ ' + (e.message || e));
