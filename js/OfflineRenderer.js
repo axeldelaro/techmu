@@ -1,14 +1,9 @@
 /* =====================================================================
    OfflineRenderer.js — Export RAPIDE (bounce hors-ligne).
 
-   Au lieu d'enregistrer en temps réel (MediaRecorder), on reconstruit le
-   graphe audio dans un OfflineAudioContext et on le rend PLUS VITE que le
-   temps réel : un morceau de 3 min s'exporte en ~1-2 s.
-
-   Le rendu honore TOUS les réglages courants (knobs kick, sidechain, FX,
-   volume) puisqu'on réutilise le même StateManager + HardcoreKick, et le
-   même moteur d'Arrangement que la lecture live -> l'export sonne EXACTEMENT
-   comme ce que tu entends.
+   Au lieu d'enregistrer en temps réel, on reconstruit le graphe audio 
+   dans un OfflineAudioContext. Version modifiée : WAV exclusif pour
+   contourner les limitations de mémoire RAM lors de l'encodage MP3.
    ===================================================================== */
 
 import { HardcoreKick } from './instruments/HardcoreKick.js';
@@ -30,29 +25,24 @@ export class OfflineRenderer {
 
   /**
    * Rend la configuration courante et déclenche le téléchargement.
-   * @param {('mp3'|'wav')} [format]
    * @param {(p:number)=>void} [onProgress]
    * @returns {Promise<void>}
    */
-  async render(format = 'mp3', onProgress) {
+  async render(onProgress) {
     const buffer = this.engine.sampleBuffer;
     const structure = this.scheduler.arrangement ? this.scheduler.arrangement.s : null;
-    const blob = await this.renderToBlob(buffer, structure, format, onProgress);
-    this._download(blob, `uptempo-export.${blob.type.includes('mpeg') ? 'mp3' : 'wav'}`);
+    const blob = await this.renderToBlob(buffer, structure, onProgress);
+    this._download(blob, `uptempo-export.wav`);
   }
 
   /**
-   * Rend un buffer + une structure d'arrangement en Blob (sans téléchargement).
-   * Réutilisé par l'export simple ET le traitement en lot. Applique les
-   * réglages de son COURANTS (kick/bass/fx) à chaque rendu.
+   * Rend un buffer + une structure d'arrangement en Blob WAV.
    * @param {AudioBuffer} buffer
-   * @param {object|null} structure - structure d'arrangement (ou null = pattern)
-   * @param {('mp3'|'wav')} [format]
+   * @param {object|null} structure
    * @param {(p:number)=>void} [onProgress]
    * @returns {Promise<Blob>}
    */
-  async renderToBlob(buffer, structure, format = 'mp3', onProgress) {
-    if (format === 'mp3' && typeof lamejs === 'undefined') format = 'wav';
+  async renderToBlob(buffer, structure, onProgress) {
     const sr = this.engine.ctx.sampleRate;
     const downbeat = structure ? structure.downbeat : 0;
 
@@ -81,11 +71,8 @@ export class OfflineRenderer {
     this._scheduleAll(facade, octx, dur, structure);
     onProgress?.(30);
 
-    // Progression animée pendant le rendu (suspend() n'est pas fiable hors
-    // Chrome -> on ne l'utilise PAS). Watchdog : ne peut jamais bloquer
-    // indéfiniment ; au-delà du timeout on remonte une erreur claire.
     let fake = 30;
-    const ticker = setInterval(() => { fake = Math.min(58, fake + 1); onProgress?.(fake); }, 200);
+    const ticker = setInterval(() => { fake = Math.min(85, fake + 1); onProgress?.(fake); }, 200);
     let rendered;
     try {
       rendered = await Promise.race([
@@ -98,24 +85,19 @@ export class OfflineRenderer {
       clearInterval(ticker);
       facade.kick.dispose(); facade.subBass.dispose();
     }
-    onProgress?.(60);
+    onProgress?.(90);
 
-    if (format === 'mp3') return this._encodeMp3(rendered, (p) => onProgress?.(60 + Math.round(p * 0.4)));
+    const blob = this._encodeWav(rendered);
     onProgress?.(100);
-    return this._encodeWav(rendered);
+    return blob;
   }
 
-  /**
-   * Construit le graphe master + chaîne sample dans `octx`, à l'identique
-   * du moteur live, et renvoie une façade compatible avec l'Arrangement.
-   */
   _buildGraph(octx, buffer) {
     const state = this.state;
     const fx = state.get('fx');
 
     const busInput = octx.createGain();
 
-    // DJ filter (bypass si désactivé).
     const djFilter = octx.createBiquadFilter();
     if (fx.djFilterOn) this._applyDjFilter(djFilter, fx.djFilter, octx.sampleRate);
     else { djFilter.type = 'lowpass'; djFilter.frequency.value = 20000; djFilter.Q.value = 0.0001; }
@@ -123,11 +105,9 @@ export class OfflineRenderer {
     const gaterGain = octx.createGain();
     const masterGain = octx.createGain(); masterGain.gain.value = fx.masterLevel;
 
-    // EQ master 2 bandes (mêmes réglages qu'en live).
     const eqLow = octx.createBiquadFilter(); eqLow.type = 'lowshelf'; eqLow.frequency.value = 180; eqLow.gain.value = fx.eqLow || 0;
     const eqHigh = octx.createBiquadFilter(); eqHigh.type = 'highshelf'; eqHigh.frequency.value = 4000; eqHigh.gain.value = fx.eqHigh || 0;
 
-    // Limiter de mastering (mêmes réglages qu'en live).
     const limiter = octx.createDynamicsCompressor();
     limiter.threshold.value = -1.0; limiter.knee.value = 0; limiter.ratio.value = 20;
     limiter.attack.value = 0.001; limiter.release.value = 0.05;
@@ -135,7 +115,6 @@ export class OfflineRenderer {
     busInput.connect(djFilter); djFilter.connect(gaterGain); gaterGain.connect(masterGain);
     masterGain.connect(eqLow); eqLow.connect(eqHigh); eqHigh.connect(limiter); limiter.connect(octx.destination);
 
-    // Chaîne sample : duck -> compresseur glue -> gain -> bus.
     const sampleDuck = octx.createGain();
     const scComp = octx.createDynamicsCompressor();
     scComp.threshold.value = -16; scComp.ratio.value = 4; scComp.attack.value = 0.004;
@@ -143,11 +122,9 @@ export class OfflineRenderer {
     const sampleGain = octx.createGain(); sampleGain.gain.value = state.get('sample.level');
     sampleDuck.connect(scComp); scComp.connect(sampleGain); sampleGain.connect(busInput);
 
-    // Instruments (lisent l'état -> tes réglages s'appliquent).
     const kick = new HardcoreKick(octx, busInput, state);
     const subBass = new SubBass(octx, busInput, state);
 
-    // Façade exposant l'API attendue par l'Arrangement / le pattern.
     const facade = {
       ctx: octx, busInput, sampleDuck, gaterGain, kick, subBass, sampleBuffer: buffer, state,
       playSlice: (time, offset, dur, rate = 1, amp = 0.7) => {
@@ -176,7 +153,6 @@ export class OfflineRenderer {
         g.linearRampToValueAtTime(0.0001, time + 0.003);
         g.linearRampToValueAtTime(1, time + stepDur * 0.5);
       },
-      // Perc/FX synthétiques identiques au moteur live.
       playHat: (time, amp = 0.12) => this._noiseVoice(octx, busInput, kick.noiseBuffer, time, 0.04, 'highpass', 7000, 0.7, amp, 0.06),
       playClap: (time, amp = 0.22) => {
         for (let k = 0; k < 3; k++) this._noiseVoice(octx, busInput, kick.noiseBuffer, time + k * 0.008, 0.07, 'bandpass', 1700, 1.2, amp, 0.09);
@@ -218,7 +194,6 @@ export class OfflineRenderer {
     return facade;
   }
 
-  /** Voix de bruit générique (hat/clap/impact). */
   _noiseVoice(octx, dest, noiseBuf, time, decay, type, freq, Q, amp, stop) {
     const src = octx.createBufferSource(); src.buffer = noiseBuf; src.loop = true;
     const filt = octx.createBiquadFilter(); filt.type = type; filt.frequency.value = freq; filt.Q.value = Q;
@@ -235,18 +210,11 @@ export class OfflineRenderer {
     else { node.type = 'lowpass'; node.frequency.value = 20000; node.Q.value = 0.0001; }
   }
 
-  /**
-   * Programme tous les évènements de 0 à `dur` sur la timeline offline,
-   * via l'Arrangement (si actif) ou le pattern 16 pas classique.
-   */
   _scheduleAll(facade, octx, dur, structure) {
-    // Grille = tempo de CETTE structure (essentiel pour le traitement en lot,
-    // chaque morceau ayant son propre kbpm), sinon le transport courant.
     const bpm = structure && structure.kbpm ? structure.kbpm : this.state.get('transport.bpm');
     const secs16 = (60 / bpm) / 4;
 
     if (structure) {
-      // Nouvelle instance d'Arrangement reliée à la façade offline.
       const arrangement = new Arrangement(facade, structure);
       let t = 0, sg = 0;
       while (t < dur) { arrangement.tick(sg, t); t += secs16; sg++; }
@@ -262,29 +230,6 @@ export class OfflineRenderer {
     }
   }
 
-  /** Encode l'AudioBuffer rendu en MP3 (lamejs, 192 kbps stéréo). */
-  _encodeMp3(buffer, onProgress) {
-    const enc = new lamejs.Mp3Encoder(2, buffer.sampleRate, 192);
-    const L = buffer.getChannelData(0);
-    const R = buffer.numberOfChannels > 1 ? buffer.getChannelData(1) : L;
-    const BLOCK = 1152;
-    const li = new Int16Array(BLOCK), ri = new Int16Array(BLOCK);
-    const data = [];
-    const toI16 = (x) => { x = x < -1 ? -1 : x > 1 ? 1 : x; return x < 0 ? x * 0x8000 : x * 0x7fff; };
-    for (let i = 0; i < buffer.length; i += BLOCK) {
-      const n = Math.min(BLOCK, buffer.length - i);
-      for (let j = 0; j < n; j++) { li[j] = toI16(L[i + j]); ri[j] = toI16(R[i + j]); }
-      const chunk = enc.encodeBuffer(li.subarray(0, n), ri.subarray(0, n));
-      if (chunk.length) data.push(new Uint8Array(chunk));
-      if ((i & 0x3ffff) === 0) onProgress?.(i / buffer.length);
-    }
-    const end = enc.flush();
-    if (end.length) data.push(new Uint8Array(end));
-    onProgress?.(1);
-    return new Blob(data, { type: 'audio/mpeg' });
-  }
-
-  /** Convertit l'AudioBuffer rendu en WAV 16-bit stéréo. */
   _encodeWav(buffer) {
     const ch = Math.min(2, buffer.numberOfChannels);
     const L = buffer.getChannelData(0);
